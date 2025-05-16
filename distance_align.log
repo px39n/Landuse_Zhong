@@ -4,3 +4,10 @@
 2025-05-11 20:59:19,271 - INFO - Processing D:\xarray\tif2nc_out\Dist_GUR_masked.tif
 2025-05-11 20:59:49,596 - INFO - Successfully processed: D:\xarray\tif2nc_out\Dist_GUR_masked.tif
 2025-05-11 20:59:49,811 - INFO - ✅ All done! Aligned files are in: D:\xarray\aligned2\distance
+2025-05-12 13:35:30,489 - INFO - Loading master template...
+2025-05-12 13:35:30,607 - INFO - Skipping existing file: D:\xarray\aligned2\distance\Dist_GUR_masked_2015.nc
+2025-05-12 13:35:30,609 - INFO - Processing D:\xarray\tif2nc_out\Dist_GUR_masked.tif
+2025-05-12 13:36:33,171 - INFO - Successfully processed: D:\xarray\tif2nc_out\Dist_GUR_masked.tif
+2025-05-12 13:36:34,668 - INFO - Processing D:\xarray\tif2nc_out\power_2020_distance.tif
+2025-05-12 13:37:10,614 - INFO - Successfully processed: D:\xarray\tif2nc_out\power_2020_distance.tif
+2025-05-12 13:37:11,419 - INFO - ✅ All done! Aligned files are in: D:\xarray\aligned2\distance

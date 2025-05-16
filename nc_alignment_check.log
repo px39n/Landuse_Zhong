@@ -1,0 +1,10 @@
+2025-05-12 16:39:10,510 - INFO - Reference file: Dist_GUR_masked_2015.nc
+2025-05-12 16:39:10,522 - INFO - Reference grid size: 21600x43200
+2025-05-12 16:39:10,524 - INFO - Reference lat range: [-89.99583333333334, 89.99583333333335]
+2025-05-12 16:39:10,527 - INFO - Reference lon range: [-179.9958333333333, 179.9958333333333]
+2025-05-12 16:39:11,430 - INFO - 
+=== Alignment Check Summary ===
+2025-05-12 16:39:11,432 - INFO - Total files checked: 15
+2025-05-12 16:39:11,434 - INFO - Aligned files: 14
+2025-05-12 16:39:11,434 - INFO - Misaligned files: 0
+2025-05-12 16:39:11,437 - INFO - Files with errors: 0
