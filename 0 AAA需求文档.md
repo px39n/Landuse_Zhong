@@ -120,6 +120,9 @@ df_predict=pd.read_csv('2.data_prediction.csv')
 
 df_training=pd.read_csv('2.training_embedding.csv')
 
+
+
+
 1. 首先标准化所有特征
 
 2. 然后，给定特征列表，如：
