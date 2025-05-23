@@ -38,3 +38,45 @@ def load_datasets(abandon_pattern: str, feature_pattern: str):
     # ds_feat = ds_feat.chunk({'time': t_ft, 'lat': 1000, 'lon': 1000})
 
     return ds_abandon, ds_feat
+
+
+def load_training_data(
+    csv_path: str,
+    years: Sequence[int] = (2018,2020)
+) -> pd.DataFrame:
+    """
+    加载特征集。
+    """
+    df = pd.read_csv(csv_path)
+    
+    # 检查是否为空
+    if df.empty:
+        raise ValueError(f"CSV 文件为空: {csv_path}")
+        
+    # 经纬度列映射
+    rename_map = {}
+    for src in ('latitude', 'lat_deg', 'LAT', 'Lat'):
+        if src in df.columns:
+            rename_map[src] = 'lat'
+    for src in ('longitude', 'lon_deg', 'LON', 'Lon'):
+        if src in df.columns:
+            rename_map[src] = 'lon'
+    df = df.rename(columns=rename_map)
+    
+    # 强制类型转换
+    df['lat'] = pd.to_numeric(df['lat'], errors='raise')
+    df['lon'] = pd.to_numeric(df['lon'], errors='raise')
+    
+    # 检查时间列是否已经是datetime格式
+    if 'time' in df.columns:
+        if not pd.api.types.is_datetime64_any_dtype(df['time']):
+            df['time'] = pd.to_datetime(df['time'])
+    else:
+        raise ValueError("CSV 文件缺少 time 列")
+    
+    # 过滤年份
+    df = df[df['time'].dt.year.isin(years)]
+    if df.empty:
+        raise ValueError(f"没有符合年份 {years} 的记录")
+
+    return df.reset_index(drop=True)
