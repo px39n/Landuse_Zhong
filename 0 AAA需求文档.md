@@ -114,6 +114,10 @@ dataframe 保存为2.training_embedding.csv
 
 保存为 2.data_prediction.csv
 
+
+
+
+
 ## 3.1 预测
 
 df_predict=pd.read_csv('2.data_prediction.csv')
@@ -137,7 +141,104 @@ df_training=pd.read_csv('2.training_embedding.csv')
 
 
 
+## 4.1 Emission_Reduction_potential.ipynb
+净碳减排效益评估（Net Carbon Benefit）**
 
 
+对每块土地，定义其部署光伏的净减排效益，考虑以下三个维度：
+
+$$
+{\text { Net } \text { Benefit }_i=\text { Emission Reduction }_i-\text { Opportunity }_{\text {Loss }}^i}
+$$
+
+- Emission Reduction $n_i$ ：该地部署光伏带来的年均碳减排量（基于电网碳强度和发电潜力计算）
+- Opportunity Loss $_i$ ：该地若用于其他用途（如碳汇，农业，保育）的平均或最大减排潜力损失
+- 这个差值代表真实的＂减排净值＂，更贴合气候政策优化目标
+
+**1 Section， 你需要计算一个表格的column，叫做Emission Reduction**
+- Emission Reduction $n_i$ ：该地部署光伏带来的年均碳减排量（基于电网碳强度和发电潜力计算）
+**Input** is 3.data_prediction.csv'
+
+
+**Output** is a column of the table
+
+**2 Section， 你需要计算一个表格的column，叫做Opportunity Loss**
+- Opportunity Loss $_i$ ：该地若用于其他用途（如碳汇，农业，保育）的平均或最大减排潜力损失
+**Output** is a column of the table
+
+**3 Section， 你需要计算一个表格的column，叫做Net Carbon Benefit**
+- Net Carbon Benefit $_i$ ：该地部署光伏的净减排效益
+
+使用公式
+$$
+{\text { Net } \text { Benefit }_i=\text { Emission Reduction }_i-\text { Opportunity }_{\text {Loss }}^i}
+$$
+的变体，你自己思考
+
+然后最后必须只能得到一个东西csv，叫做**4.data_prediction_net_benefit.csv**
+
+
+
+
+
+## **5．环境代理成本评估（Proxy Environmental Cost）**
+构建一种新的＂环境代价指标＂，量化部署光伏的不可见损失，例如：
+- 生物多样性丧失（使用物种多样性指数或生态热区重叠度）
+- 土地利用冲突（与农业，森林或自然保护区的重叠系数）
+- 景观完整性破坏，社会接受度等
+
+将这些维度转换为统一单位（如美元／吨 $\mathrm{CO}_2$ 或加权分值），形成一种代理成本（proxy cost）或综合损失函数，用于与减排效益一同纳入多目标优化。
+
+
+这是你最后一个任务， 需要生成一个csv文件，叫做**6.data_prediction_proxy_cost.csv**
+
+
+
+
+## 6.1 EDA of Data.ipynb， 这个是探索性数据分析
+
+分成三个section (严格按照markdown 一级标题来分区)
+
+Section 1： 空间分布
+画出来你的2016年和2017年的撂荒地空间分布
+
+Section 2： 特征分布
+这里的目的是，画出来你的特征的分布， 包括风速，温度，降水量，土地利用类型
+
+
+（这一部分，可以使用我编写的库， pip install FeatureInsight
+然后使用如下代码，
+```python
+from FeatureInsight import struct_Investigation,univar_dis,bivar_dis
+Structure summary=struct_Investigation(df)
+summary.print() 
+summary.sort('Unique Count')
+
+univar_dis(df,df.columns)
+
+
+```
+
+
+## 6.2 Figure1_Policy_Suitability_Map.ipynb， 这个是生成图1的代码
+
+分成三个section (严格按照markdown 一级标题来分区)
+
+Section 1. 光伏潜力预测图
+用气泡，或者化成连续的样子。
+
+## 6.3 Figure2_Emission_Reduction_Potential.ipynb， 这个是生成图2的代码
+
+分成三个section (严格按照markdown 一级标题来分区)
+
+Section 1-3. 净碳效益评估图
+用气泡，或者化成连续的样子。分别绘制
+
+
+Emission Reduction
+
+Opportunity Loss
+
+Net Carbon Benefit
 
 
