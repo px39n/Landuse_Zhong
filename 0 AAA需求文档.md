@@ -131,6 +131,8 @@ df_training=pd.read_csv('2.training_embedding.csv')
 
 
 根据距离相似度函数，预测df_predict的power, 转换为ds, 绘图后保存为
+
+
 3.prediction_{year}.nc
 
 
