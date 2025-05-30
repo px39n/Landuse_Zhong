@@ -53,31 +53,5 @@ def load_pv_sites(
 
     return df.reset_index(drop=True)
 
-def load_training_data(
-    csv_path: str,
-    years: Sequence[int] = (2018, 2020)
-) -> pd.DataFrame:
-    """
-    加载特征集。
-    """
-    df = pd.read_csv(csv_path)
-    # 经纬度列映射
-    rename_map = {}
-    for src in ('latitude', 'lat_deg', 'LAT', 'Lat'):
-        if src in df.columns:
-            rename_map[src] = 'lat'
-    for src in ('longitude', 'lon_deg', 'LON', 'Lon'):
-        if src in df.columns:
-            rename_map[src] = 'lon'
-    df = df.rename(columns=rename_map)
-    # 强制类型转换
-    df['lat'] = pd.to_numeric(df['lat'], errors='raise')
-    df['lon'] = pd.to_numeric(df['lon'], errors='raise')
-    df['year'] = pd.to_numeric(df['year'], downcast='integer', errors='raise')
-    # 重命名年份
-    df = df.rename(columns={'year': 'time'})
-    df['time'] = pd.to_datetime(df['time'], format='%Y')
 
-    return df.reset_index(drop=True)
-    
     
