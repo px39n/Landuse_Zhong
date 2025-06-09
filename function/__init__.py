@@ -9,6 +9,7 @@ import xarray as xr
 import pandas as pd
 import numpy as np
 from .load_all_ds import load_all_ds
+from .global_varibles import *
 
 __all__ = ['load_pv_sites', 'load_datasets', 'align_df_with_ds', 'xr',
            'pd', 'np', 'load_training_data', 
