@@ -8,11 +8,12 @@ from .data_utils import load_abandon, load_embedding
 import xarray as xr
 import pandas as pd
 import numpy as np
+from .load_all_ds import load_all_ds
 
 __all__ = ['load_pv_sites', 'load_datasets', 'align_df_with_ds', 'xr',
            'pd', 'np', 'load_training_data', 
            'fill_nonpositive_with_nearest', 'filter_duplicates',
-           'load_abandon', 'load_embedding']
+           'load_abandon', 'load_embedding', 'load_all_ds']
 
 '''
  'select_and_train_kde', 'score_env',

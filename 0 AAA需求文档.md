@@ -141,14 +141,14 @@ df_training=pd.read_csv('2.training_embedding.csv')
 
 
 
-## 4.1 Emission_Reduction_potential.ipynb
+## 4.1 Expectation_Emission_Reduction_potential.ipynb
 净碳减排效益评估（Net Carbon Benefit）**
 
 
 对每块土地，定义其部署光伏的净减排效益，考虑以下三个维度：
 
 $$
-{\text { Net } \text { Benefit }_i=\text { Emission Reduction }_i-\text { Opportunity }_{\text {Loss }}^i}
+{\text { Net } \text { Benefit }_i=\text { Actual Emission Reduction }_i-\text { Expectation Gained}_{\text {Loss }}^i}
 $$
 
 - Emission Reduction $n_i$ ：该地部署光伏带来的年均碳减排量（基于电网碳强度和发电潜力计算）
@@ -162,9 +162,19 @@ $$
 
 **Output** is a column of the table
 
-**2 Section， 你需要计算一个表格的column，叫做Opportunity Loss**
-- Opportunity Loss $_i$ ：该地若用于其他用途（如碳汇，农业，保育）的平均或最大减排潜力损失
+**2 Section， 你需要计算一个表格的column，叫做Expectaton Emission**
+- Expectaton emission $_i$ ：该地若用于其他用途（如森林，农业，保育）的理论期望碳汇效益
 **Output** is a column of the table
+  - Step 1: 生成coversion.nc文件。
+
+| Classification | Value | If Rule |
+|----------|----------|----------|
+| Cropland    | 1     |    ['landcover']序列中出现两次cropland==1  |
+| Forest    | Data     | ['landcover']序列中出现两次forest==2  |
+| Row 3    | Data     | ['landcover'] |
+| Row 4    | Data     | Info     |
+| Row 5    | Data     | Info     |
+  - Step 2:
 
 **3 Section， 你需要计算一个表格的column，叫做Net Carbon Benefit**
 - Net Carbon Benefit $_i$ ：该地部署光伏的净减排效益
@@ -242,3 +252,4 @@ Opportunity Loss
 Net Carbon Benefit
 
 
+[[!image.png]]
