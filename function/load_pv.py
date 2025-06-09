@@ -41,15 +41,17 @@ def load_pv_sites(
     if missing:
         raise ValueError(f"CSV 文件缺少必要列: {sorted(missing)}")
     
-    df['lon'] = df['lon'].astype('float32')
-    df['lat'] = df['lat'].astype('float32')
-    # 重命名年份
-    df = df.rename(columns={'year': 'time'})
-    df['time'] = pd.to_datetime(df['time'], format='%Y')
-
+    # First filter by year
     df = df[df['year'].isin(years)]
     if df.empty:
         raise ValueError(f"没有符合年份 {years} 的记录")
+
+    df['lon'] = df['lon'].astype('float32')
+    df['lat'] = df['lat'].astype('float32')
+    
+    # Then rename year to time and convert to datetime
+    df = df.rename(columns={'year': 'time'})
+    df['time'] = pd.to_datetime(df['time'], format='%Y')
 
     return df.reset_index(drop=True)
 

@@ -15,3 +15,5 @@ output/*
 # 忽略所有.nc文件
 *.nc
 
+figure/
+figure/*
