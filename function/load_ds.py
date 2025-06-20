@@ -18,7 +18,6 @@ def load_datasets(abandon_pattern: str, feature_pattern: str):
     if not files_abandon or not files_feature:
         raise FileNotFoundError("找不到文件")
 
-    # 用 h5netcdf 引擎打开
     ds_abandon = xr.open_mfdataset(
         files_abandon,
         # combine='by_coords',

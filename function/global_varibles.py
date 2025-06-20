@@ -51,7 +51,8 @@ PATHS = {
     'us_abandon': r'data\us_abandon_clean.csv',
     'us_pv_embedding': r'data\training_embedding.csv',
     'point_density': r'data\point_density.pkl',
-    'data_prediction_net_benefit': r'data\4.data_prediction_net_benefit.csv'
+    'data_prediction_net_benefit': r'data\4.data_prediction_net_benefit.csv',
+    'data_strategies': r'data\4.df_strategies.csv'
 }
 
 ZERO_COLS = [
