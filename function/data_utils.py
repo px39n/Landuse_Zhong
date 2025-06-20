@@ -139,9 +139,9 @@ def fill_nonpositive_with_nearest(df, target_cols=ZERO_COLS, lat_col='lat', lon_
         tree = cKDTree(positive_coords)
         
         # 获取非正值的索引
-        nonpositive_mask = df[col] <= 0
+        nonpositive_mask = (df[col] <= 0) | df[col].isna()
         if not nonpositive_mask.any():
-            # print(f"列 {col} 没有需要填充的非正值")
+            print(f"列 {col} 没有需要填充的非正值或NaN值")
             continue
             
         # 找到最近的正值点
