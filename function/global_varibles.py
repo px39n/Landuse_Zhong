@@ -52,7 +52,38 @@ PATHS = {
     'us_pv_embedding': r'data\training_embedding.csv',
     'point_density': r'data\point_density.pkl',
     'data_prediction_net_benefit': r'data\4.data_prediction_net_benefit.csv',
-    'data_strategies': r'data\4.df_strategies.csv'
+    'data_strategies': r'data\4.df_strategies.csv',
+
+    # 以下数据是5.1模块计算成本-效益生成分析结果
+    
+    'df_pv_npv': r'data/5.1_photovoltaic_npv_time_series_corrected_2020usd.csv',
+    'df_pv_rcp_year':r'data/5.1_photovoltaic_summary_corrected_by_rcp_year_2020usd.csv',
+    'df_pv_rcp_overall':r'data/5.1_photovoltaic_rcp_averages_corrected_2020usd.csv',
+    'df_pv_2050':r'data/5.1_photovoltaic_with_economic_feasibility_corrected.csv',
+
+    'df_agricultural_npv':r'data/5.1_agricultural_npv_time_series_corrected_2020usd.csv',
+    'df_agricultural_rcp_year':r'data/5.1_agricultural_summary_corrected_by_rcp_year_2020usd.csv',
+    'df_agricultural_rcp_overall':r'data/5.1_agricultural_rcp_averages_corrected_2020usd.csv',
+    'df_agricultural_2050':r'data/5.1_agricultural_production_with_economic_feasibility_corrected.csv',
+
+    'df_afforestation_npv': r'data/5.1_afforestation_npv_time_series_corrected_2020usd.csv',
+    'df_afforestation_rcp_year': r'data/5.1_afforestation_summary_corrected_by_rcp_year_2020usd.csv',
+    'df_afforestation_rcp_overall': r'data/5.1_afforestation_rcp_averages_corrected_2020usd.csv',
+    'df_afforestation_2050': r'data/5.1_afforestation_with_economic_feasibility_corrected.csv',
+
+    'df_natural_npv': r'data/5.1_natural_restoration_npv_time_series_2020usd.csv',
+    
+
+
+    
+
+    
+
+    
+
+    
+
+
 }
 
 ZERO_COLS = [
