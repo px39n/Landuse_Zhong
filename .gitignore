@@ -16,9 +16,4 @@ output/*
 *.nc
 
 figure/
-figure/** - Copy*
-.cursor/
-__pycache__/
-*.pyc
-*.log
-
+figure/*

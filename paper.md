@@ -22,7 +22,7 @@ Here, we propose an extensible land-specific carbon abatement decision-making fr
 
 # Result 
 
-## Land Priorities for PV deploying 
+## Climate Priorities for PV deploying on Abandoned Cropland
 
 
 
