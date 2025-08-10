@@ -1,0 +1,19 @@
+# 忽略 data 目录下的所有文件
+data/
+data/*
+
+# 忽略 output 目录下的所有文件
+output/
+output/*
+
+# 忽略所有.csv文件
+*.csv
+
+# 忽略所有.xlsx文件
+*.xlsx
+
+# 忽略所有.nc文件
+*.nc
+
+figure/
+figure/*
