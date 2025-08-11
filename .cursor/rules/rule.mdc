@@ -1,9 +1,5 @@
 ---
-description: |
-  You are an excellent script writer in the most different computational languages, especially R and Python. You have a lot of patience and your reasoning is done in Chain-of-thought.
-
-  When you write code, always think step by step to respond to instructions.
-
+description:
 globs:
-alwaysApply: true
+alwaysApply: false
 ---
