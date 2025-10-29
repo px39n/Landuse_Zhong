@@ -137,8 +137,15 @@ class CombinedPreprocessor(BaseEstimator, TransformerMixin):
                 if col == 'landcover':
                     X_cat[col] = X_cat[col].astype(int)
             
+            # ✅ 关键修复：重新初始化OneHotEncoder并强制设置categories
+            self.categorical_preprocessor = OneHotEncoder(
+                categories=[self.known_landcover_categories],  # 重新设置固定类别
+                sparse_output=False, 
+                handle_unknown='ignore',
+                drop=None
+            )
             self.categorical_preprocessor.fit(X_cat)
-        
+            
         # ✅ 生成固定的特征名称
         self._generate_feature_names()
         return self
@@ -187,14 +194,8 @@ class CombinedPreprocessor(BaseEstimator, TransformerMixin):
         # ✅ 类别特征名称 - 固定生成
         if self.categorical_features:
             for col in self.categorical_features:
-                if col == 'landcover':
-                    # 为每个landcover类别生成固定的特征名
-                    for category in self.known_landcover_categories:
-                        feature_names.append(f"landcover_{category}")
-                else:
-                    # 其他类别特征的处理
-                    cat_names = self.categorical_preprocessor.get_feature_names_out([col])
-                    feature_names.extend(cat_names)
+                cat_names = self.categorical_preprocessor.get_feature_names_out([col])
+                feature_names.extend(cat_names)
         
         self.feature_names_out_ = np.array(feature_names)
 
@@ -297,30 +298,12 @@ def comprehensive_data_quality_check(
     recs: List[Dict[str, Any]] = []
     return report, recs
 
-# ------------------------------
-# Plot helper
-# ------------------------------
-def plot_loglik_vs_components(grid_results: Dict[str, Any], best_params: Dict[str, Any]) -> None:
-    df = pd.DataFrame(grid_results)
-    if "param_gmm__n_components" not in df.columns:
-        warnings.warn("Grid results do not contain 'param_gmm__n_components'. Skipping plot.")
-        return
-    series = df.groupby("param_gmm__n_components")["mean_test_score"].mean()
-    plt.figure(figsize=(10, 6))
-    plt.plot(series.index, series.values, marker="o")
-    plt.axvline(x=best_params["gmm__n_components"], linestyle="--", label=f"Best: {best_params['gmm__n_components']}")
-    plt.xlabel("n_components")
-    plt.ylabel("CV mean log-likelihood (higher is better)")
-    plt.title("Log-likelihood vs n_components (CV)")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
 
 # ------------------------------
 # 修复：主API
 # ------------------------------
-def select_and_train_gmm(df_pos: pd.DataFrame, bandwidths=None):
+def select_and_train_gmm(df_pos: pd.DataFrame, bandwidths=None, use_bic=False):
+
     """
     修复版本的GMM训练函数（升级版）：
     - 解决数据泄露（预处理器进Pipeline）；
@@ -354,7 +337,8 @@ def select_and_train_gmm(df_pos: pd.DataFrame, bandwidths=None):
 
     # 预处理探查
     print("测试预处理器...")
-    X_test = combined_preprocessor.fit_transform(df_pos)
+    test_preprocessor = CombinedPreprocessor(available_numeric, available_categorical)
+    X_test = test_preprocessor.fit_transform(df_pos)
     print(f"预处理后特征形状: {X_test.shape}")
 
     # 质量检查
@@ -380,31 +364,41 @@ def select_and_train_gmm(df_pos: pd.DataFrame, bandwidths=None):
         ("gmm", GaussianMixture(**gmm_params)),
     ])
 
-    # 参数网格（新增 n_init 与 reg_covar）
+    # 参数网格
     if bandwidths is not None and np.size(bandwidths) > 0:
         comps = sorted({int(max(1, round(float(b)))) for b in np.ravel(bandwidths)})
     else:
-        comps = list(range(25, 45, 1))  # [25,27,29,31,33,35,37,39,41,43]
-
-
+        n_samples = len(df_pos)
+        max_k = min(35, n_samples // 50)  
+        comps = list(range(15, max_k + 1, 2))
+    
     cov_types = ["diag", "full"]
-    n_init_list = [10, 15, 20]
-    reg_list =[1e-7, 1e-6, 5e-6]
-
+    n_init_list = [20]
+    reg_list = [1e-7, 1e-6]
+    
     param_grid = {
         "gmm__n_components": comps,
         "gmm__covariance_type": cov_types,
         "gmm__n_init": n_init_list,
         "gmm__reg_covar": reg_list,
     }
+    
+    if use_bic:
+        def gmm_bic_scorer(estimator, X, y=None):
+            Xt = estimator[:-1].transform(X)
+            return -estimator[-1].bic(Xt)
+        scoring = gmm_bic_scorer
+        print("使用BIC作为评分标准")
+    else:
+        scoring = None  # 使用 Pipeline.score -> GMM 的平均对数似然
+        print("使用对数似然作为评分标准")
 
-    print("\n开始网格搜索 (5折交叉验证)...")
-
-
+    
     grid = GridSearchCV(
         estimator=full_pipe,
         param_grid=param_grid,
         cv=5,
+        scoring=scoring,  # ✅ 可选的评分标准
         n_jobs=-1,
         refit=True,
         verbose=1,
@@ -704,7 +698,6 @@ def plot_cv_by_covariance_with_errorbars(cv_results: Dict[str, Any], best_params
     ax.legend(frameon=False)
     plt.tight_layout()
     plt.show()
-
 
 def _ecdf(values: np.ndarray):
     v = np.sort(values)

@@ -86,26 +86,26 @@ def load_abandon(abandon_path: str,time_flag=2020) -> pd.DataFrame:
     # 原始数据加载、含空值、仅规范了列名
     df = load_training_data(abandon_path, years=[2020])
     # 去除空值
-    df = df.dropna(subset=[col for col in df.columns if col not in ['recultivation', 'current_abandonment']])
+    df = df.dropna(subset=['lat', 'lon', 'time', 'abandonment_year', 'abandonment_duration'])
     # 弃耕年份规定
-    df = df[df['abandonment_year'] + df['abandonment_duration'] - 2 >= time_flag].copy()
-    print('You want to predict the year:',(df['abandonment_year'] + df['abandonment_duration']).min()-2)
+    df = df[df['abandonment_year'] + df['abandonment_duration'] - 1 >= time_flag].copy()
+    print('You want to predict the year:',(df['abandonment_year'] + df['abandonment_duration']).min()-1)
     # 将当前弃耕状态更新为1
     df['current_abandonment'] = 1
-    return df.drop(columns=NONE_ABANDON_COLS).reset_index(drop=True)
+    return df.drop(columns=NONE_ABANDON_COLS, errors='ignore').reset_index(drop=True)
 
 def load_embedding(embedding_path: str) -> pd.DataFrame:
 
     df = load_training_data(embedding_path, YEARS)
     # 去除空值
-    df = df.dropna(subset=[col for col in df.columns if col not in ['abandonment_year','abandonment_duration','recultivation', 'current_abandonment']])
+    df = df.dropna(subset=['lat', 'lon', 'time'])
 
-    return df.drop(columns=NONE_ABANDON_COLS).reset_index(drop=True)
+    return df.drop(columns=NONE_ABANDON_COLS, errors='ignore').reset_index(drop=True)
 
 # 此处传递的数据是load_embedding()返回的数据与load_abandon()返回的数据
 def fill_nonpositive_with_nearest(df, target_cols=ZERO_COLS, lat_col='lat', lon_col='lon'):
     """
-    使用最近邻的正值填充目标列中的非正值（小于等于0的值）
+    使用最近邻的正值填充目标列中的值（小于等于0的值）
     
     参数:
     df: pandas DataFrame，包含经纬度和目标列
@@ -139,7 +139,7 @@ def fill_nonpositive_with_nearest(df, target_cols=ZERO_COLS, lat_col='lat', lon_
         tree = cKDTree(positive_coords)
         
         # 获取非正值的索引
-        nonpositive_mask = (df[col] <= 0) | df[col].isna()
+        nonpositive_mask = (df[col] < 0) | df[col].isna()
         if not nonpositive_mask.any():
             print(f"列 {col} 没有需要填充的非正值或NaN值")
             continue
