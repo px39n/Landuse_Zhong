@@ -695,9 +695,7 @@ def _compute_shap_deep(model, X_test, feature_names, sample_size=1000):
     return shap_values
 
 
-# ==========================================
-# 辅助函数 - PU评估
-# ==========================================
+
 
 def _select_optimal_threshold(results, pi=None, cost_fp=1.0, cost_fn=1.0):
     """智能阈值选择策略"""
@@ -780,6 +778,7 @@ def _print_pu_evaluation_summary(results, best_result, pi, negative_ratio, cost_
     print(f"可靠性: {best_result['reliability']}")
     print(f"混淆矩阵: TP={best_result['TP']}, FN={best_result['FN']}, "
           f"FP={best_result['FP']}, TN={best_result['TN']}")
+    print(f"F1代价敏感: {best_result['F1_cost_sensitive']:.3f}")
 
 
 # ==========================================
