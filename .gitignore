@@ -25,3 +25,5 @@ __pycache__/
 # 环境变量文件（包含API密钥）
 .env
 .env.local
+
+Supplymentary_figure/Supplymentary_figure/*
