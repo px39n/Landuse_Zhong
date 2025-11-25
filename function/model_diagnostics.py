@@ -26,6 +26,10 @@ try:
 except ImportError:
     SHAP_AVAILABLE = False
     print("⚠️ SHAP not available, some features will be disabled")
+except Exception as e:
+    # 捕获所有异常，不仅仅是 ImportError
+    SHAP_AVAILABLE = False
+    print(f"⚠️ SHAP not available ({type(e).__name__}): {e}, some features will be disabled")
 
 
 # ==========================================
