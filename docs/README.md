@@ -15,4 +15,4 @@ jupyter notebook --no-browser --port=8888
 
 
 
-在Jupyter页面中，选择 `Python (bayes-gpu)` 作为核（kernel），以确保在GPU加速环境下运行代码。
+在Jupyter页面中，选择 `Python (bayes-gpu)` 作为核（kernel），以确保在GPU加速环境下运行代码

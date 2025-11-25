@@ -10,8 +10,23 @@ import numpy as np
 from .load_all_ds import load_all_ds
 from .global_varibles import *
 from .lat_aggrline import plot_revenue_ratio_by_latitude
-from .gmm_training import CombinedPreprocessor
-import geopandas as gpd
+from .gmm_training import (
+    CombinedPreprocessor,
+    select_and_train_gmm,
+    score_env,
+    split_pos_for_calibration,
+    attach_env_calibration,
+    logdensity_reference_stats,
+    assess_similarity_by_logdensity,
+    visualize_similarity_diagnostics,
+    plot_loglik_vs_components,
+    plot_cv_by_covariance_with_errorbars,
+    comprehensive_data_quality_check
+)
+try:
+    import geopandas as gpd
+except ImportError:
+    gpd = None
 
 
 from .global_varibles import (
@@ -95,6 +110,17 @@ __all__ = [
 
     'plot_revenue_ratio_by_latitude',
     'CombinedPreprocessor',
+    # GMM训练相关函数
+    'select_and_train_gmm',
+    'score_env',
+    'split_pos_for_calibration',
+    'attach_env_calibration',
+    'logdensity_reference_stats',
+    'assess_similarity_by_logdensity',
+    'visualize_similarity_diagnostics',
+    'plot_loglik_vs_components',
+    'plot_cv_by_covariance_with_errorbars',
+    'comprehensive_data_quality_check',
     
     'PATHS',
     'ZERO_COLS',
@@ -124,4 +150,43 @@ if MODEL_DIAGNOSTICS_AVAILABLE:
         'diagnose_all_models',
         'pu_evaluation_from_results'
     ])
+
+# 从模块化的训练管道模块导入
+try:
+    from .model_building import (
+        build_deep_learning_model,
+        build_transformer_resnet_model,
+        RandomForestWrapper
+    )
+    from .training import (
+        train_and_evaluate_model,
+        train_multiple_models
+    )
+    from .learning_curve import plot_learning_curve_nn
+    from .evaluation import (
+        plot_training_results,
+        plot_complete_pipeline_results
+    )
+    from .pipeline import run_correct_training_pipeline
+    from .model_saving import (
+        save_complete_model_pipeline,
+        load_complete_model_pipeline
+    )
+    TRAINING_PIPELINE_AVAILABLE = True
+    __all__.extend([
+        'build_deep_learning_model',
+        'build_transformer_resnet_model',
+        'RandomForestWrapper',
+        'train_and_evaluate_model',
+        'train_multiple_models',
+        'plot_learning_curve_nn',
+        'plot_training_results',
+        'plot_complete_pipeline_results',
+        'run_correct_training_pipeline',
+        'save_complete_model_pipeline',
+        'load_complete_model_pipeline'
+    ])
+except ImportError as e:
+    TRAINING_PIPELINE_AVAILABLE = False
+    print(f"⚠️ training pipeline 模块不可用，某些训练功能将被禁用: {e}")
 

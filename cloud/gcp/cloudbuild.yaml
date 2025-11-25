@@ -1,0 +1,29 @@
+# Google Cloud Build 配置文件
+# 用于在GCP上构建Docker镜像，无需本地Docker
+
+steps:
+  # 构建Docker镜像
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/sensitivity-analysis:latest'
+      - '-f'
+      - 'cloud/gcp/Dockerfile'
+      - '.'
+
+  # 推送镜像到GCR
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/sensitivity-analysis:latest'
+
+images:
+  - 'gcr.io/$PROJECT_ID/sensitivity-analysis:latest'
+
+options:
+  machineType: 'N1_HIGHCPU_8'  # 使用高性能机器加速构建
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: '3600s'  # 1小时超时
+

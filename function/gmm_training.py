@@ -48,30 +48,76 @@ SkPipeline = Pipeline
 # 深度学习库
 try:
     import tensorflow as tf
-    from tensorflow import keras
-    from tensorflow.keras import layers
+    # 使用 tf.keras 而不是 from tensorflow import keras（避免递归错误）
+    # TensorFlow 2.15 兼容方式
+    keras = tf.keras
+    layers = keras.layers  # 使用 keras.layers 而不是 tensorflow.keras.layers
     TENSORFLOW_AVAILABLE = True
-    print("✅ TensorFlow available")
+    print("[OK] TensorFlow available")
 except ImportError:
     TENSORFLOW_AVAILABLE = False
-    print("❌ TensorFlow not available")
+    print("[WARN] TensorFlow not available")
+except RecursionError as e:
+    # 捕获递归错误（TensorFlow 2.15 的已知问题）
+    TENSORFLOW_AVAILABLE = False
+    print(f"[WARN] TensorFlow import recursion error: {e}")
+    print("[INFO] This may be a TensorFlow 2.15 compatibility issue")
+except Exception as e:
+    # 捕获所有异常，不仅仅是 ImportError
+    TENSORFLOW_AVAILABLE = False
+    print(f"[WARN] TensorFlow not available: {type(e).__name__}: {e}")
 
-try:
-    from scikeras.wrappers import KerasClassifier
-    SCIKERAS_AVAILABLE = True
-    print("✅ scikeras available")
-except ImportError:
-    SCIKERAS_AVAILABLE = False
-    print("❌ scikeras not available (pip install scikeras)")
+# scikeras 延迟导入（在 TensorFlow 成功导入后，避免 keras.api 兼容性问题）
+SCIKERAS_AVAILABLE = False
+KerasClassifier = None
+
+def _ensure_scikeras():
+    """确保 scikeras 已导入，处理 keras.api 兼容性问题"""
+    global SCIKERAS_AVAILABLE, KerasClassifier
+    if SCIKERAS_AVAILABLE and KerasClassifier is not None:
+        return True
+    
+    if not TENSORFLOW_AVAILABLE:
+        return False
+    
+    try:
+        # 在 TensorFlow 已导入的情况下，延迟导入 scikeras
+        from scikeras.wrappers import KerasClassifier as _KerasClassifier
+        KerasClassifier = _KerasClassifier
+        SCIKERAS_AVAILABLE = True
+        print("[OK] scikeras available")
+        return True
+    except ModuleNotFoundError as e:
+        if 'keras.api' in str(e):
+            print(f"[WARN] scikeras version incompatible with TensorFlow 2.11: {e}")
+            print("[INFO] Try upgrading scikeras: pip install --upgrade scikeras>=0.12.0")
+        SCIKERAS_AVAILABLE = False
+        return False
+    except ImportError:
+        SCIKERAS_AVAILABLE = False
+        print("[WARN] scikeras not available (pip install scikeras)")
+        return False
+    except Exception as e:
+        SCIKERAS_AVAILABLE = False
+        print(f"[WARN] scikeras import failed: {type(e).__name__}: {e}")
+        return False
+
+# 如果 TensorFlow 已可用，尝试导入 scikeras
+if TENSORFLOW_AVAILABLE:
+    _ensure_scikeras()
 
 # SHAP（可选）
 try:
     import shap
     SHAP_AVAILABLE = True
-    print("✅ SHAP available")
+    print("[OK] SHAP available")
 except ImportError:
     SHAP_AVAILABLE = False
-    print("❌ SHAP not available")
+    print("[WARN] SHAP not available")
+except Exception as e:
+    # 捕获所有异常，不仅仅是 ImportError
+    SHAP_AVAILABLE = False
+    print(f"[WARN] SHAP not available: {type(e).__name__}: {e}")
 
 # 可视化设置
 plt.style.use('default')
@@ -299,9 +345,7 @@ def comprehensive_data_quality_check(
     return report, recs
 
 
-# ------------------------------
-# 修复：主API
-# ------------------------------
+
 def select_and_train_gmm(df_pos: pd.DataFrame, bandwidths=None, use_bic=False):
 
     """
