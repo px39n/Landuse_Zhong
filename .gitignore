@@ -26,4 +26,10 @@ __pycache__/
 .env
 .env.local
 
-Supplymentary_figure/Supplymentary_figure/*
+
+Supplymentary/Supplymentary_figure/
+Supplymentary/Supplymentary_figure/*
+Supplymentary/Supplymentary/
+Supplymentary/Supplymentary/*
+Supplymentary/ML_sensitivity
+Supplymentary/ML_sensitivity/*
