@@ -57,8 +57,16 @@ PATHS = {
 
 
     # 以下数据是5.1模块计算成本-效益生成分析结果
-    'df_pv_npv': r'data/5.1_photovoltaic_results_complete_streaming.csv',
-    'df_pv_summary': r'data/5.1_photovoltaic_policy_summary_streaming.csv',
+    # 在2025-12-08，增加了需求情景数据调整
+    'df_pv_npv': r'data/5.1_photovoltaic_results_demand_scenario_5.csv',
+    'df_pv_electrification':r'data/5.1_photovoltaic_results_demand_scenario_0.csv', #电气化场景
+    'df_pv_high':r'data/5.1_photovoltaic_results_demand_scenario_1.csv', #增长场景
+    'df_pv_low':r'data/5.1_photovoltaic_results_demand_scenario_2.csv', #减少场景
+    'df_pv_medium':r'data/5.1_photovoltaic_results_demand_scenario_3.csv', #中等电气化场景
+    'df_pv_ref':r'data/5.1_photovoltaic_results_demand_scenario_4.csv', # 参考电气化场景
+    'df_pv_original':r'data/5.1_photovoltaic_results_complete_streaming.csv', # 原始场景
+
+
 
     # 以下是根据5.2模块计算的农业经济可行性分析结果
     'df_agricultural_npv':r'data/5.1_agricultural_results_streaming_optimized.csv',
@@ -75,7 +83,7 @@ PATHS = {
     'df_natural_rcp_year': r'data/5.1_natural_restoration_summary_streaming.csv',
     'df_natural_rcp_overall': r'data/5.1_natural_restoration_rcp_overall_streaming.csv',
 
-    'df_economic_feasibility': r'data/5.1_net_expected_benefit_results.csv'
+    'df_economic_feasibility': r'data/5.1_net_expected_benefit_results.csv',
 
 }
 
