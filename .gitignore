@@ -27,11 +27,11 @@ __pycache__/
 .env.local
 
 
+# 忽略 Supplymentary 目录下的子目录和文件
 Supplymentary/Supplymentary_figure/
-Supplymentary/Supplymentary_figure/*
 Supplymentary/Supplymentary/
-Supplymentary/Supplymentary/*
-Supplymentary/ML_sensitivity
-Supplymentary/ML_sensitivity/*
+Supplymentary/ML_sensitivity/
+
+# 也忽略其下的所有PDF和PNG文件
 Supplymentary/**/*.pdf
 Supplymentary/**/*.png
