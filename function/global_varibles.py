@@ -40,7 +40,7 @@ fea_2d_variable = [
 PATHS = {
     'abandonment': r"D:\xarray\merged_chunk_2\*.nc",
     'feature':     "D:/xarray/aligned2/Feature_all/*.nc",
-    'csv':         "aligned_for_training0519.csv",
+    'csv':         r"C:\Dev\Landuse_Zhong_clean\data\aligned_for_training0519.csv",
     'prediction':  "",
     'prediction_us': "",
     'test_output': "positive_samples_test_500.csv",

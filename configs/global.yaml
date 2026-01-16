@@ -1,0 +1,329 @@
+# Global Pipeline Configuration
+# Policy-informed Priority for Photovoltaic Deployment on Abandoned Cropland
+
+# Run mode configuration
+run:
+  mode: local  # Options: local | cloud
+  debug: false
+  log_level: INFO
+
+# Google Cloud Storage configuration
+gcs:
+  enabled: false
+  bucket: ""  # Your GCS bucket name
+  project: ""  # Your GCP project ID
+  prefix: "landuse/global"  # Base path in bucket
+  
+  # Data paths in GCS
+  paths:
+    raw_data: "data/raw"
+    aligned: "data/aligned"
+    features: "data/features"
+    models: "models"
+    results: "results"
+    figures: "figures"
+
+# Local storage configuration
+local:
+  base_dir: "."
+  data_dir: "data"
+  output_dir: "output"
+  cache_dir: "cache"
+
+# Tiling configuration for global processing
+tiling:
+  enabled: true
+  tile_size: 5  # degrees
+  overlap: 0.1  # degrees
+  target_crs: "EPSG:4326"
+
+# Data processing configuration
+data:
+  # Global data paths (统一全球数据路径)
+  paths:
+    # Core datasets
+    abandonment_nc: "D:/xarray/merged_chunk_2/*.nc"
+    abandonment_csv: "D:/xarray/03_test/Global_total_2020.csv"
+    feature: "D:/xarray/aligned2/Feature_all/*.nc"
+    emission: "D:/xarray/aligned2/Emission_all/*.nc"
+    
+    # PV data
+    pv_sites_csv: "C:/Dev/Landuse_Zhong_clean/data/aligned_for_training0519.csv"
+    pv_embedding: "C:/Dev/Landuse_Zhong_clean/data/training_embedding.csv" 
+    
+    # Shapefiles (Global)
+    world_shp: "C:/Dev/Landuse_Zhong_clean/data/main_ADM_0.shp"  # Global vector boundary
+    cn_sheng: "data/sheng2022.shp"
+    us_county: "data/cb_2018_us_county_5m.shp"
+    
+    # Output paths
+    test_output: "positive_samples_test_500.csv"
+    full_output: "positive_samples_full_with_features.csv"
+    
+    # Analysis results
+    carbon_benefit: "data/4.data_prediction_net_benefit.csv"
+    restoration_strategies: "data/4.1 Restoration_strategy_data.csv"
+    
+    # Economic results (multiple scenarios)
+    pv_npv_base: "data/5.1_photovoltaic_results_demand_scenario_5.csv"
+    pv_npv_scenarios:
+      electrification: "data/5.1_photovoltaic_results_demand_scenario_0.csv"
+      high_growth: "data/5.1_photovoltaic_results_demand_scenario_1.csv"
+      low_growth: "data/5.1_photovoltaic_results_demand_scenario_2.csv"
+      medium_electrification: "data/5.1_photovoltaic_results_demand_scenario_3.csv"
+      reference: "data/5.1_photovoltaic_results_demand_scenario_4.csv"
+      original: "data/5.1_photovoltaic_results_complete_streaming.csv"
+  
+  # Spatial resolution
+  resolution: 0.00833333  # 1/120 degree (~1km)
+  
+  # Abandonment detection
+  abandonment:
+    years: [1992, 2022]
+    window_size: 5
+    source: "ESA-CCI"
+  
+  # Environmental features (15 dimensions)
+  features:
+    physical:
+      - land_cover
+      - dem
+      - slope
+      - above_ground_biomass
+    
+    climate:
+      - near_surface_temperature
+      - wind_speed
+      - shortwave_radiation
+    
+    socioeconomic:
+      - population_density
+      - gdp_density
+      - distance_to_town
+      - distance_to_grid
+      - road_density_primary
+      - road_density_secondary
+      - road_density_tertiary
+
+# Model configuration
+model:
+  # Stage 4: GMM (Gaussian Mixture Model)
+  gmm:
+    n_components: 23  # Optimal from BIC criterion
+    covariance_type: "full"
+    n_init: 10
+    random_state: 42
+    
+  # Stage 4: Transformer-ResNet
+  transformer_resnet:
+    input_dim: 15
+    num_heads: 4
+    ff_dim: 128
+    num_transformer_blocks: 2
+    resnet_blocks: 3
+    dropout_rate: 0.3
+    learning_rate: 0.001
+    batch_size: 512
+    epochs: 100
+    early_stopping_patience: 10
+  
+  # Negative sampling strategy
+  negative_sampling:
+    ratio: 1.0  # 1:1 positive to negative
+    method: "stratified"
+    density_threshold: 5  # percentile
+  
+  # Train/val/test split
+  split:
+    train: 0.6
+    val: 0.2
+    test: 0.2
+    random_state: 42
+
+# Stage 6: Carbon emission reduction
+carbon:
+  # Photovoltaic parameters
+  pv:
+    capacity_density: 0.17  # kW/m²
+    system_efficiency: 0.8
+    annual_hours: 8760
+    lifetime: 30  # years (2020-2050)
+    temperature_coefficient: -0.004  # per °C
+    
+  # LNCS (Land-based Natural Climate Solutions)
+  lncs:
+    strategies:
+      - afforestation
+      - agriculture
+      - non_woody_vegetation
+    
+    # Probability allocation
+    allocation:
+      grid_size: 10  # 10x10 aggregation
+      method: "idw"  # inverse distance weighting
+      k_neighbors: 5
+
+# Stage 7: Economic feasibility
+economics:
+  # Time parameters
+  baseline_year: 2020
+  target_year: 2050
+  time_step: 10  # years
+  discount_rate: 0.05  # 5%
+  
+  # Policy scenarios (IPCC AR6)
+  scenarios:
+    - name: "P1"
+      description: "No global coordination"
+    - name: "P2a"
+      description: "Immediate action - ambitious"
+    - name: "P2b"
+      description: "Immediate action - moderate"
+    - name: "P2c"
+      description: "Immediate action - conservative"
+    - name: "P3a"
+      description: "Delayed action - ambitious"
+    - name: "P3b"
+      description: "Delayed action - moderate"
+    - name: "P3c"
+      description: "Delayed action - conservative"
+  
+  # Cost components
+  costs:
+    pv_capex: true  # One-time investment
+    pv_opex: true   # Operation & maintenance
+    lncs_opportunity: true  # LNCS opportunity cost
+
+# Stage 8: 3E-Synergy Index
+synergy:
+  # Dimensions
+  dimensions:
+    environment: true
+    emission: true
+    economic: true
+  
+  # WCCD (Weighted Coupling Coordination Degree)
+  wccd:
+    method: "SLSQP"  # Optimization algorithm
+    constraint: "sum_to_one"  # Σw_i = 1
+    adaptive_weights: true  # Pixel-level optimization
+  
+  # Priority ranking
+  ranking:
+    attention_kernels:
+      - efficiency
+      - equity
+      - robustness
+
+# Stage 9: Visualization
+visualization:
+  # Figure settings
+  dpi: 300
+  format: ["pdf", "png"]
+  
+  # Map projections
+  projection: "EPSG:5070"  # Albers Equal Area for US
+  
+  # Output figures
+  figures:
+    fig1: "environmental_suitability"
+    fig2_policy: "policy_matrix"
+    fig2_priority: "priority_map"
+    fig3: "carbon_comparison"
+    fig4: "cumulative_benefits"
+
+# Analysis configuration
+analysis:
+  # Scale levels
+  scales:
+    - national
+    - state
+  
+  # State-level analysis
+  state:
+    focus_states:
+      - "Texas"
+      - "California"
+      - "Indiana"
+  
+  # Statistical inference
+  regression:
+    method: "mundlak_bayesian"
+    backend: "pymc"
+    gpu_enabled: false
+
+# Multi-objective optimization (optional analysis)
+optimization:
+  enabled: false  # Set to true to run Pareto optimization
+  
+  # Optimization algorithm
+  algorithm: "nsga2"  # NSGA-II for multi-objective
+  population_size: 100
+  n_generations: 200
+  crossover_prob: 0.9
+  mutation_prob: 0.1
+  
+  # Efficiency kernel
+  kernel:
+    type: "decreasing"  # Options: decreasing, uniform, increasing, exponential, power
+    params:
+      alpha: 2.0  # For exponential kernel
+      p: 2.0      # For power kernel
+  
+  # Objectives to optimize
+  objectives:
+    - environment
+    - emission
+    - economic
+  
+  # Output
+  output:
+    save_frontier: true
+    save_rankings: true
+    n_solutions: 50  # Number of Pareto solutions to save
+
+# Regional exclusions (US-specific features not for global pipeline)
+regional_exclusions:
+  us_specific:
+    enabled: false  # Disable US-specific analysis in global pipeline
+    note: |
+      The following features are US-specific and excluded from global pipeline:
+      - Energy demand adjustment (9.0 Energy_demand_adjust.ipynb)
+      - NREL electricity projections
+      - US state-level energy scenarios
+      - 2050 US Department of Energy targets
+    
+    # If enabled (for US-specific runs only), use these settings
+    energy_scenarios:
+      - "HIGH ELECTRIFICATION"
+      - "MEDIUM ELECTRIFICATION"
+      - "REFERENCE ELECTRIFICATION"
+      - "LOW ELECTRICITY GROWTH"
+      - "ELECTRIFICATION TECHNICAL POTENTIAL"
+    
+    target_year: 2050
+    data_source: "NREL"
+
+# Cloud job configuration
+cloud_job:
+  # Compute resources
+  machine_type: "n1-standard-8"
+  gpu: false
+  gpu_type: "nvidia-tesla-t4"
+  
+  # Job parameters
+  max_workers: 10
+  timeout: 3600  # seconds
+  
+  # Docker image
+  docker:
+    image: "gcr.io/[PROJECT]/landuse-pipeline:latest"
+    base: "python:3.10-slim"
+
+# Logging and monitoring
+logging:
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  handlers:
+    - console
+    - file
+  file_path: "logs/pipeline.log"
