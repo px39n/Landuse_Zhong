@@ -35,3 +35,7 @@ Supplymentary/ML_sensitivity/
 # 也忽略其下的所有PDF和PNG文件
 Supplymentary/**/*.pdf
 Supplymentary/**/*.png
+
+
+world_shp/
+world_shp/*
