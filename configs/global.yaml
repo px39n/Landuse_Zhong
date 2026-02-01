@@ -56,6 +56,9 @@ data:
     cn_sheng: "data/sheng2022.shp"
     us_county: "data/cb_2018_us_county_5m.shp"
     
+    # OSM / critical infrastructure (CISI-style extraction)
+    osm_pbf: "D:/Global_OSM/history-latest.osm.pbf"
+    osmconf: "D:/Gloabl_OSM/osmconf.inf"  # or .ini; used by GDAL for PBF read
     # Output paths
     test_output: "positive_samples_test_500.csv"
     full_output: "positive_samples_full_with_features.csv"
@@ -73,6 +76,10 @@ data:
       medium_electrification: "data/5.1_photovoltaic_results_demand_scenario_3.csv"
       reference: "data/5.1_photovoltaic_results_demand_scenario_4.csv"
       original: "data/5.1_photovoltaic_results_complete_streaming.csv"
+  
+  # OSM infrastructure study years (for history PBF: time-filter snapshot per year)
+  infrastructure:
+    years: [2017, 2018, 2019, 2020, 2021, 2022]  # list(range(2017, 2023))
   
   # Spatial resolution
   resolution: 0.00833333  # 1/120 degree (~1km)
