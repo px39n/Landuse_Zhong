@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "portable-unblock-report.v2.schema.json",
+  "title": "Portable Unblock Report v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "meta",
+    "trigger",
+    "comparison",
+    "diagnosis",
+    "research",
+    "discriminating_probe",
+    "key_conclusions",
+    "guidance",
+    "disposition",
+    "sinks"
+  ],
+  "properties": {
+    "schema": {"const": "portable-unblock-report.v2"},
+    "meta": {
+      "type": "object",
+      "required": ["created_at", "created_by"],
+      "properties": {
+        "created_at": {"type": "string"},
+        "created_by": {"type": "string"},
+        "change_id": {"type": ["string", "null"]},
+        "task_id": {"type": ["string", "null"]},
+        "attempt_id": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "trigger": {
+      "type": "object",
+      "required": ["trigger_type", "summary", "error_excerpt"],
+      "properties": {
+        "trigger_type": {
+          "enum": [
+            "hard_error",
+            "output_deviation",
+            "quality_regression",
+            "wrong_source_or_target",
+            "evidence_gap",
+            "no_progress",
+            "contract_mismatch"
+          ]
+        },
+        "summary": {"type": "string", "minLength": 1},
+        "error_excerpt": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "comparison": {
+      "type": "object",
+      "required": [
+        "expected_outcome",
+        "observed_outcome",
+        "acceptance_refs",
+        "evidence_refs",
+        "last_good_baseline"
+      ],
+      "properties": {
+        "expected_outcome": {"type": "string", "minLength": 1},
+        "observed_outcome": {"type": "string", "minLength": 1},
+        "deviation_magnitude": {"type": ["string", "number", "null"]},
+        "acceptance_refs": {"type": "array", "items": {"type": "string"}},
+        "evidence_refs": {"type": "array", "items": {"type": "string"}},
+        "last_good_baseline": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "diagnosis": {
+      "type": "object",
+      "required": ["facts", "unknowns", "hypotheses"],
+      "properties": {
+        "facts": {"type": "array", "items": {"type": "string"}},
+        "unknowns": {"type": "array", "items": {"type": "string"}},
+        "hypotheses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "claim", "supporting_evidence", "contradicting_evidence", "confidence"],
+            "properties": {
+              "id": {"type": "string"},
+              "claim": {"type": "string"},
+              "supporting_evidence": {"type": "array", "items": {"type": "string"}},
+              "contradicting_evidence": {"type": "array", "items": {"type": "string"}},
+              "confidence": {"enum": ["high", "medium", "low"]}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "research": {
+      "type": "object",
+      "required": ["providers_used", "evidence"],
+      "properties": {
+        "providers_used": {"type": "array", "items": {"type": "string"}},
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "pointer", "summary", "captured_at"],
+            "properties": {
+              "id": {"type": "string"},
+              "kind": {"enum": ["repo", "command", "artifact", "docs", "web"]},
+              "pointer": {"type": "string"},
+              "summary": {"type": "string"},
+              "captured_at": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "discriminating_probe": {
+      "type": "object",
+      "required": ["action", "distinguishes", "expected_signal", "budget", "verify"],
+      "properties": {
+        "action": {"type": "string"},
+        "distinguishes": {"type": "array", "items": {"type": "string"}},
+        "expected_signal": {"type": "string"},
+        "budget": {
+          "type": "object",
+          "required": ["max_calls", "max_seconds"],
+          "properties": {
+            "max_calls": {"type": "integer", "minimum": 0},
+            "max_seconds": {"type": "integer", "minimum": 0}
+          },
+          "additionalProperties": false
+        },
+        "verify": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "key_conclusions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["claim", "confidence", "evidence_ids"],
+        "properties": {
+          "claim": {"type": "string"},
+          "confidence": {"enum": ["high", "medium", "low"]},
+          "evidence_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "guidance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["step", "action", "why", "verify", "fallback"],
+        "properties": {
+          "step": {"type": "integer", "minimum": 1},
+          "action": {"type": "string"},
+          "why": {"type": "string"},
+          "verify": {"type": "string"},
+          "fallback": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "disposition": {
+      "type": "object",
+      "required": ["action", "rationale"],
+      "properties": {
+        "action": {"enum": ["retry", "targeted_probe", "amend_spec", "supersede_task", "stop_budget"]},
+        "rationale": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "sinks": {
+      "type": "object",
+      "required": ["requested", "applied", "errors"],
+      "properties": {
+        "requested": {"type": "array"},
+        "applied": {"type": "array"},
+        "errors": {"type": "array"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

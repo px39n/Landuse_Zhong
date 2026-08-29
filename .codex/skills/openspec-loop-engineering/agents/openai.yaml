@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenSpec Loop Engineering"
+  short_description: "Run a bounded OpenSpec implement-verify loop."
+  default_prompt: "Use $openspec-loop-engineering to run this change through a bounded implement-verify-unblock loop."
