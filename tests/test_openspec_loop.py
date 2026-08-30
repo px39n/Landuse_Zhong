@@ -2494,6 +2494,124 @@ def test_promote_cannot_leave_index_drift(tmp_path: Path) -> None:
     assert checked["contract_fingerprint"] == promoted["contract_fingerprint"]
 
 
+def test_promote_atomically_updates_explicit_task_state(tmp_path: Path) -> None:
+    tasks = """## Active Task Registry
+
+- [ ] 1.1 Implement parser [#R1]
+  - DEPENDS_ON: none
+  - STATE: pending
+  - ACCEPT: the parser rejects an unknown ref.
+  - TEST: SCOPE: CLI
+    - Run: `python -c "pass"`
+    - Verify: exit 0
+- [ ] 1.2 Implement verifier [#R2]
+  - DEPENDS_ON: R1
+  - STATE: pending
+  - ACCEPT: the verifier returns exactly one verdict.
+  - TEST: SCOPE: CLI
+    - Run: `python -c "pass"`
+    - Verify: exit 0
+"""
+    features = base_features(
+        [("R1", "1.1", False, False), ("R2", "1.2", False, False)]
+    )
+    features["features"]["R1"]["state"] = "pending"
+    features["features"]["R2"]["state"] = "pending"
+    write_contract(tmp_path, "demo", tasks, features)
+    ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
+    seal_demo(tmp_path, ledger)
+    before_fingerprint = run_loop(tmp_path, "check", "demo")["contract_fingerprint"]
+    record_verify_pass(tmp_path, ledger, "R1")
+
+    promoted = run_loop(tmp_path, "promote", "demo", "--ref", "R1")
+
+    tasks_text = (tmp_path / "openspec" / "changes" / "demo" / "tasks.md").read_text(
+        encoding="utf-8"
+    )
+    assert "- [x] 1.1 Implement parser [#R1]" in tasks_text
+    assert "  - STATE: passed" in tasks_text
+    assert "- [ ] 1.2 Implement verifier [#R2]\n  - DEPENDS_ON: R1\n  - STATE: pending" in tasks_text
+
+    feature_payload = json.loads(
+        (tmp_path / "openspec" / "changes" / "demo" / "feature_list.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert feature_payload["features"]["R1"]["passes"] is True
+    assert feature_payload["features"]["R1"]["state"] == "passed"
+    assert feature_payload["features"]["R2"]["state"] == "pending"
+
+    checked = run_loop(tmp_path, "check", "demo")
+    assert checked["ok"] is True
+    assert checked["ready_refs"] == ["R2"]
+    assert checked["contract_fingerprint"] == before_fingerprint
+    assert promoted["contract_fingerprint"] == before_fingerprint
+
+
+def test_promote_does_not_scan_past_selected_task_block(tmp_path: Path) -> None:
+    tasks = """## Active Task Registry
+
+- [ ] 1.1 Implement parser [#R1]
+  - DEPENDS_ON: none
+  - ACCEPT: the parser rejects an unknown ref.
+  - TEST: SCOPE: CLI
+    - Run: `python -c "pass"`
+    - Verify: exit 0
+
+## Historical Tasks
+
+- [ ] 9.9 Archived task [#R99]
+  - STATE: maxed
+"""
+    write_contract(tmp_path, "demo", tasks, base_features([("R1", "1.1", False, False)]))
+    ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
+    seal_demo(tmp_path, ledger)
+    record_verify_pass(tmp_path, ledger, "R1")
+
+    promoted = run_loop(tmp_path, "promote", "demo", "--ref", "R1")
+
+    tasks_text = (tmp_path / "openspec" / "changes" / "demo" / "tasks.md").read_text(
+        encoding="utf-8"
+    )
+    assert promoted["promoted"] is True
+    assert "- [x] 1.1 Implement parser [#R1]" in tasks_text
+    assert "- [ ] 9.9 Archived task [#R99]\n  - STATE: maxed" in tasks_text
+
+
+def test_promote_rewrites_all_explicit_state_directives_in_selected_block(
+    tmp_path: Path,
+) -> None:
+    tasks = """## Active Task Registry
+
+- [ ] 1.1 Implement parser [#R1]
+  - DEPENDS_ON: none
+  - STATE: pending
+  - STATE: ready
+  - ACCEPT: the parser rejects an unknown ref.
+  - TEST: SCOPE: CLI
+    - Run: `python -c "pass"`
+    - Verify: exit 0
+"""
+    features = base_features([("R1", "1.1", False, False)])
+    features["features"]["R1"]["state"] = "ready"
+    write_contract(tmp_path, "demo", tasks, features)
+    ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
+    seal_demo(tmp_path, ledger)
+    before_fingerprint = run_loop(tmp_path, "check", "demo")["contract_fingerprint"]
+    record_verify_pass(tmp_path, ledger, "R1")
+
+    promoted = run_loop(tmp_path, "promote", "demo", "--ref", "R1")
+
+    tasks_text = (tmp_path / "openspec" / "changes" / "demo" / "tasks.md").read_text(
+        encoding="utf-8"
+    )
+    assert tasks_text.count("  - STATE: passed") == 2
+    checked = run_loop(tmp_path, "check", "demo")
+    assert checked["ok"] is True
+    assert checked["contract_fingerprint"] == before_fingerprint
+    assert promoted["contract_fingerprint"] == before_fingerprint
+
+
 def test_promote_refuses_an_unverified_ref(tmp_path: Path) -> None:
     seal_promotable_demo(tmp_path)
     tasks_path = tmp_path / "openspec" / "changes" / "demo" / "tasks.md"

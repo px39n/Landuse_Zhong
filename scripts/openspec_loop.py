@@ -126,6 +126,10 @@ LEGACY_STATE_RE = re.compile(
 )
 CHECKBOX_MARK_RE = re.compile(r"^(\s*-\s*\[)[ xX](\]\s+\d+(?:\.\d+)+\s+)")
 STATE_DIRECTIVE_RE = re.compile(r"^\s*-\s*STATE\s*:", re.IGNORECASE)
+STATE_DIRECTIVE_VALUE_RE = re.compile(
+    r"^(?P<prefix>\s*-\s*STATE\s*:\s*)(?P<value>.*?)(?P<newline>\r?\n)?$",
+    re.IGNORECASE,
+)
 REF_RANGE_RE = re.compile(
     r"^(?P<start>R[A-Za-z0-9_.-]+)\s*-\s*(?P<end>R[A-Za-z0-9_.-]+)$"
 )
@@ -3112,6 +3116,53 @@ def promote_failure(change_id: str, issues: list[str], **extra: Any) -> int:
     return 2
 
 
+def promote_task_lines(
+    lines: list[str],
+    *,
+    line_number: int,
+    next_line_number: int | None,
+) -> None:
+    """Mark one task passed while preserving unrelated task bytes.
+
+    ``STATE`` is optional in the task grammar.  When it is present, promotion
+    owns that lifecycle transition alongside the checkbox; otherwise the
+    regenerated feature index would correctly report task/feature drift.
+    """
+    index = line_number - 1
+    promoted_line = CHECKBOX_MARK_RE.sub(r"\1x\2", lines[index], count=1)
+    if promoted_line == lines[index]:
+        raise ValueError(f"line {line_number} is not a promotable checkbox")
+    lines[index] = promoted_line
+
+    end_index = (next_line_number - 1) if next_line_number is not None else len(lines)
+    in_fence = False
+    state_directives: list[tuple[int, re.Match[str]]] = []
+    for state_index in range(index + 1, end_index):
+        if lines[state_index].strip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if HEADING_RE.match(lines[state_index]) or CHECKBOX_RE.match(lines[state_index]):
+            break
+        if not STATE_DIRECTIVE_RE.match(lines[state_index]):
+            continue
+        match = STATE_DIRECTIVE_VALUE_RE.match(lines[state_index])
+        if match is None:
+            raise ValueError(f"line {state_index + 1} has an invalid STATE directive")
+        state = strip_trailing_period(match.group("value")).lower().replace("-", "_")
+        if state not in {"pending", "ready"}:
+            raise ValueError(
+                f"line {state_index + 1} has non-promotable STATE `{state}`"
+            )
+        state_directives.append((state_index, match))
+
+    for state_index, match in state_directives:
+        lines[state_index] = (
+            f"{match.group('prefix')}passed{match.group('newline') or ''}"
+        )
+
+
 def cmd_promote(args: argparse.Namespace) -> int:
     repo_root, _, fingerprint, ledger_path, _, warnings = resolve_runtime_policy(args)
     before = build_plan_payload(repo_root, args.change_id, advisory=False)
@@ -3146,14 +3197,25 @@ def cmd_promote(args: argparse.Namespace) -> int:
     # Decode without universal-newline translation so an untouched line stays
     # byte-identical, whatever the checkout's line endings are.
     lines = original_tasks.decode("utf-8").splitlines(keepends=True)
-    index = selected["line_number"] - 1
-    promoted_line = CHECKBOX_MARK_RE.sub(r"\1x\2", lines[index], count=1)
-    if promoted_line == lines[index]:
+    next_line_number = min(
+        (
+            task["line_number"]
+            for task in before["tasks"]
+            if task["line_number"] > selected["line_number"]
+        ),
+        default=None,
+    )
+    try:
+        promote_task_lines(
+            lines,
+            line_number=selected["line_number"],
+            next_line_number=next_line_number,
+        )
+    except ValueError as exc:
         return promote_failure(
             args.change_id,
-            [f"line {selected['line_number']} is not a promotable checkbox"],
+            [str(exc)],
         )
-    lines[index] = promoted_line
     tasks_path.write_bytes("".join(lines).encode("utf-8"))
 
     try:
