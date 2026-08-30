@@ -119,7 +119,26 @@ def load_head_notebook(repo_path: Path = NOTEBOOK_PATH) -> nbformat.NotebookNode
         )
     except (OSError, subprocess.CalledProcessError):
         return None
-    return _normalize_stream_outputs(nbformat.reads(result.stdout, as_version=4))
+    notebook = _normalize_stream_outputs(nbformat.reads(result.stdout, as_version=4))
+    # After the generated notebook is committed, HEAD contains the managed
+    # appendix as well as the one preserved exploratory cell.  The generator's
+    # immutable comparison baseline is still the 72 original cells, so derive
+    # that baseline explicitly instead of assuming HEAD predates generation.
+    managed_ids = set(NEW_CELL_ORDER) | PRESERVED_EXTRA_CELL_IDS
+    legacy_ids = set(LEGACY_CODE_INDICES.values())
+    baseline_cells = []
+    for cell in notebook.cells:
+        cell_id = cell.get("id")
+        if cell_id in managed_ids:
+            continue
+        baseline_cell = copy.deepcopy(cell)
+        if cell_id in legacy_ids:
+            baseline_cell["source"] = restore_legacy_source_text(
+                str(baseline_cell.get("source", ""))
+            )
+        baseline_cells.append(baseline_cell)
+    notebook.cells = baseline_cells
+    return notebook
 
 
 def comment_legacy_source_text(source_text: str) -> str:
@@ -130,6 +149,24 @@ def comment_legacy_source_text(source_text: str) -> str:
         suffix = "\n" if line.endswith("\n") else ""
         commented.append(f"# {body}{suffix}" if body else f"#{suffix}")
     return "".join(commented)
+
+
+def restore_legacy_source_text(source_text: str) -> str:
+    """Reverse ``comment_legacy_source_text`` for a committed legacy cell."""
+    marker = "# LEGACY_DISABLED: original content retained for side-by-side comparison"
+    lines = source_text.splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\r\n") != marker:
+        return source_text
+
+    restored: list[str] = []
+    for line in lines[1:]:
+        if line.startswith("# "):
+            restored.append(line[2:])
+        elif line.startswith("#"):
+            restored.append(line[1:])
+        else:
+            raise ValueError("Committed legacy cell contains a non-commented line")
+    return "".join(restored)
 
 
 def markdown(text: str, cell_id: str) -> nbformat.NotebookNode:

@@ -16,6 +16,7 @@ from tools.update_process_notebook_contract import (
     build_mode_resample_cell,
     comment_legacy_source_text,
     load_head_notebook,
+    restore_legacy_source_text,
     transform_notebook,
 )
 
@@ -412,6 +413,11 @@ def test_transformer_is_idempotent_and_restores_legacy_outputs(tmp_path: Path) -
         if head_outputs:
             assert legacy_cell.get("outputs", []) == head_outputs
             assert legacy_cell.get("execution_count") == head_nb.cells[original_index].get("execution_count")
+
+
+def test_committed_legacy_source_roundtrips_to_the_original_baseline() -> None:
+    source = "value = 1\n\nprint(value)"
+    assert restore_legacy_source_text(comment_legacy_source_text(source)) == source
 
 
 def test_transformer_recovers_empty_notebook_atomically(tmp_path: Path) -> None:
