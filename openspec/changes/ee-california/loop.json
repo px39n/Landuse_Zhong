@@ -1,0 +1,80 @@
+{
+  "schema_version": "openspec-loop.v3",
+  "change_id": "ee-california",
+  "contract_fingerprint": "92de58b9187d06b7453637c3144761008a9e555f3ec1e63ba1b2b27609ee7fcc",
+  "narrative_digest": "98e580ed113468b0359b9b0b7a0b528017f7382052c83a152480f88086c7da61",
+  "narrative_policy": "advisory",
+  "sealed": true,
+  "autonomy": "supervised",
+  "retention": "thin",
+  "paths": {
+    "ledger": "test_cache/ee-california/loop-ledger.json",
+    "scratch": "test_cache/ee-california",
+    "product": null,
+    "bundle": null,
+    "gui_colab": null
+  },
+  "budgets": {
+    "task": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "revision": {
+      "max_iterations": 8,
+      "max_explore_runs": 1,
+      "max_subagents": 4,
+      "max_active_minutes": 120
+    },
+    "change": {
+      "max_revisions": 3,
+      "max_iterations": 20,
+      "max_active_minutes": 360
+    }
+  },
+  "per_ref_budgets": {
+    "R5": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "R6": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "R7": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "R8": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "R9": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "R10": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "R11": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "R12": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    }
+  },
+  "hard_ceiling": {
+    "max_iterations": 60,
+    "max_active_minutes": 1080,
+    "max_self_extensions": 3
+  },
+  "test_profiles": {
+    "attempt": "targeted owner tests; no retained bundle",
+    "promotion": "complete task TEST exactly once before PASS",
+    "final": "whole-change verification plus strict OpenSpec validation",
+    "audit": "legacy monitor only when retention=full or explicitly required"
+  },
+  "confirmed_at": "2026-08-30T13:59:09Z"
+}

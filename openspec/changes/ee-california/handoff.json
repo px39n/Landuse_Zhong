@@ -1,0 +1,104 @@
+{
+  "schema_version": "openspec-loop-handoff.v1",
+  "change_id": "ee-california",
+  "dispatches": [
+    {
+      "agent": "agents/ee-california-r6-runner-scout",
+      "package_id": "ee-california:R6:scout-runner",
+      "role_id": "code-scout",
+      "local_entry": "openspec-explore",
+      "ref": "R6",
+      "apply_attempt": null,
+      "assignment": "Locate public-API routing gaps across the Mode 2 runner, notebook generator, final active Process cell, and owning prediction orchestration.",
+      "acceptance_boundary": "Read-only gap map against the R6 ACCEPT and TEST clauses.",
+      "scope": [
+        "tools/run_mode2_end_to_end.py",
+        "tools/update_process_notebook_contract.py",
+        "Process.ipynb",
+        "direct owning prediction orchestration"
+      ],
+      "forbidden_scope": [
+        "file edits",
+        "paid or external execution",
+        "verification or promotion"
+      ],
+      "allowed_actions": [
+        "read",
+        "search",
+        "report"
+      ],
+      "write_scope": [],
+      "expected_result": "Exact gaps, reusable helpers, likely edit locations, and focused checks.",
+      "expected_evidence": "File and symbol anchors from the current shared worktree.",
+      "execution": "async",
+      "join": "join:ee-california:R6:preflight",
+      "continuation": "none",
+      "stop_when": "The bounded gap map is complete or a material ambiguity is found."
+    },
+    {
+      "agent": "agents/ee-california-r6-aoi-scout",
+      "package_id": "ee-california:R6:scout-aoi",
+      "role_id": "code-scout",
+      "local_entry": "openspec-explore",
+      "ref": "R6",
+      "apply_attempt": null,
+      "assignment": "Locate CONUS AOI, state-membership, California subset, schema, and resume-fingerprint gaps in prediction embedding and its owning runner.",
+      "acceptance_boundary": "Read-only gap map against the R6 AOI and product-parity clauses.",
+      "scope": [
+        "build_prediction_embedding",
+        "owning prediction runner",
+        "direct AOI and embedding tests"
+      ],
+      "forbidden_scope": [
+        "file edits",
+        "paid or external execution",
+        "verification or promotion"
+      ],
+      "allowed_actions": [
+        "read",
+        "search",
+        "report"
+      ],
+      "write_scope": [],
+      "expected_result": "Exact gaps and likely edit locations for the frozen CONUS/state contract.",
+      "expected_evidence": "File and symbol anchors from the current shared worktree.",
+      "execution": "async",
+      "join": "join:ee-california:R6:preflight",
+      "continuation": "none",
+      "stop_when": "The bounded gap map is complete or a material ambiguity is found."
+    },
+    {
+      "agent": "agents/ee-california-r6-test-scout",
+      "package_id": "ee-california:R6:test-map",
+      "role_id": "test-coverage-reviewer",
+      "local_entry": "review-pipeline",
+      "ref": "R6",
+      "apply_attempt": null,
+      "assignment": "Map the four declared R6 test files to the current ACCEPT clauses and identify the smallest attempt-level checks.",
+      "acceptance_boundary": "Read-only coverage map; no final verifier verdict.",
+      "scope": [
+        "tests/test_process_notebook_contract.py",
+        "tests/test_mode2_runner_contract.py",
+        "tests/test_multiscale_embedding_contract.py",
+        "tests/test_embedding_pipeline.py"
+      ],
+      "forbidden_scope": [
+        "file edits",
+        "external execution",
+        "final PASS or promotion"
+      ],
+      "allowed_actions": [
+        "read",
+        "search",
+        "report"
+      ],
+      "write_scope": [],
+      "expected_result": "Coverage gaps, expected failures, and minimal attempt-level check selection.",
+      "expected_evidence": "Test names and assertion anchors from the current shared worktree.",
+      "execution": "async",
+      "join": "join:ee-california:R6:preflight",
+      "continuation": "none",
+      "stop_when": "The bounded coverage map is complete."
+    }
+  ]
+}
