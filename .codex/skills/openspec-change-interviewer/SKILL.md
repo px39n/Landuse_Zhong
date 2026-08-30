@@ -1,22 +1,21 @@
 ---
 name: openspec-change-interviewer
-description: Clarify and write back an OpenSpec change with grilling, then stamp (seal) start-work authority for the Loop via a natural seal-preview ceremony covering the whole active task registry. Use for new ideas, major revisions, additive extensions, succession, retention/path decisions, or semantic drift. Do not repeatedly ask unchanged storage questions.
+description: Clarify and write back an OpenSpec change with bounded grilling, measurable acceptance, and a current task-registry fingerprint. Use for new ideas, major revisions, additive extensions, succession, irreversible retention/path/scope decisions, or semantic drift. Preview and stamp fields are optional audit diagnostics, not ordinary start-work gates.
 ---
 
 # OpenSpec Change Interviewer
 
 Own clarification and current-contract write-back under
 `openspec/changes/<change-id>/`. Do not implement product code or promote task
-state.
+state. This skill updates the one OpenSpec contract; it does not create another
+spec lifecycle, ledger, supervisor, or handoff surface.
 
-**Seal = 开工盖章**（start-work stamp）: freeze the whole active registry's
-obligations plus path profile, retention, budgets, `autonomy`, and
-`hard_ceiling` into `loop.json`. It does **not** check off tasks; `promote`
-does. One stamp covers **every** active `[#R…]` at once.
-
-Grilling's last turn **is** the stamp: accept `seal-preview.md`, then run
-`seal --confirmed` only to freeze that acceptance. Do not invent a second
-"please seal" conversation after the user already agreed to the preview.
+Ordinary start-work readiness is a matching `contract_fingerprint` with no
+pending irreversible policy decision. If `loop.json` is missing, `check` or
+`plan` records thin defaults and the current fingerprint without creating any
+ledger, scratch, cache, product, or retained root. Legacy `sealed`,
+`confirmed_at`, `seal-preview.md`, and stamp fields are optional audit
+diagnostics, not start-work authority.
 
 Load on demand from `references/`: `seal-preview-format.md`,
 `artifact-placement.md`, `acceptance-quality.md`, `interview-packet-format.md`,
@@ -28,7 +27,8 @@ Load on demand from `references/`: `seal-preview-format.md`,
 
 If the change does not exist, ask before scaffolding. If the user explicitly
 waives interviewing, write only confirmed facts and retain unresolved items as
-`Open Question:`; do not stamp an unresolved execution boundary.
+`Open Question:`; unresolved scope or irreversible policy keeps the affected
+boundary not ready.
 
 ## Phase A: index before content
 
@@ -37,6 +37,7 @@ Start with a cheap inventory:
 - paths, byte sizes, headings, task refs, checkbox/state directives
 - current `feature_list.json` schema and ref set
 - `loop.json` fingerprint, retention profile, paths, and budgets when present
+- for a semantic amendment, any remaining-work budget advisory from plan/reseal
 - strict OpenSpec validation status when available
 
 Read `tasks.md` first. Load only the proposal/design/spec sections needed to
@@ -44,13 +45,13 @@ resolve the active gap. Use targeted search and heading slices.
 
 Classify into exactly one entry mode:
 
-| Mode | When | Stamp path |
+| Mode | When | Readiness path |
 |---|---|---|
-| `new-idea` | S1 fuzzy / first contract | full grill → first-seal preview (all refs) |
-| `major-revision` | S2 design/obligation material-delta | delta grill → semantic-restamp (all refs again) |
-| `additive-extension` | S3 append tasks / pilot→batch | grill new tasks only → restamp full registry |
-| `succession` | S4 upgrade from main/archive specs | lock behavior → restamp full registry |
-| `execution-ready` | fingerprint still matches | one-line reuse; no path re-ask |
+| `new-idea` | S1 fuzzy / first contract | full grill → strict validation → fingerprint readiness |
+| `major-revision` | S2 design/obligation material-delta | delta grill → rebuild registry and fingerprint |
+| `additive-extension` | S3 append tasks / pilot→batch | grill new tasks only → rebuild the full registry |
+| `succession` | S4 upgrade from main/archive specs | lock behavior → rebuild the full registry |
+| `execution-ready` | fingerprint still matches | one-line policy reuse; no path re-ask |
 
 Also route output deviation to `$openspec-unblock-research` and residue cleanup
 to `$openspec-hygiene`.
@@ -62,9 +63,17 @@ roots (`references/seal-preview-format.md`). Recommend `thin` + `A_local_thin`
 for ordinary local work; never default a new change to another change's
 external absolute tree.
 
-Compress retention, path profile, evidence depth, test profiles, budgets, and
-`autonomy` + `hard_ceiling` into the eventual seal-preview packet rather than a
-disconnected second ceremony.
+Record retention, path profile, evidence depth, test profiles, budgets, and
+`autonomy` in the existing change contract. Use the optional `seal-preview.md`
+only when an audit diagnostic helps or an irreversible policy choice needs
+human confirmation; do not make it a second ceremony.
+
+For a semantic amendment, do not silently rescale an inherited budget. If used
+applies plus unfinished refs times `max_apply_attempts` exceed the recorded
+change cap, put one non-blocking `configured / recommended / shortfall` line
+in the advisory output. A smaller cap may be an intentional checkpoint;
+raising an activated ref-local ceiling or irreversible `hard_ceiling` remains
+a separate authority decision.
 
 If a valid `loop.json` exists and its fingerprint still matches, show a
 one-line policy summary and reuse it. Do not ask again about D-drive or cache
@@ -99,44 +108,53 @@ python scripts/generate_openspec_feature_list.py <change-id>
 `covered | material-question | material-delta | ordinary-steering | unverified`.
 Only `material-delta` changes the semantic fingerprint. Ordinary steering or
 narrative-only design edits → `reseal` (digest only). Material-delta → update
-tasks (`SUPERSEDES` as needed) → stamp preview listing **all** active refs.
+tasks (`SUPERSEDES` as needed) → regenerate the full active registry.
 
-**additive-extension.** Append-only. Grill new ACCEPT/TEST/placement. Restamp
-preview must list **old and new** refs together (full-registry stamp, not
-per-task seals). Reuse path profile unless the extension needs a new product
-root.
+**additive-extension.** Append-only. Grill new ACCEPT/TEST/placement. Regenerate
+the registry with **old and new** refs together. Reuse the path profile unless
+the extension needs a new product root.
 
 **succession.** Read main `openspec/specs/<capability>/` + archive; express
 `## MODIFIED Requirements`; lock current behavior with tests; then full-registry
-stamp.
+fingerprint readiness.
 
-## Validate and stamp (seal)
+## Validate and establish readiness
 
 Natural flow after grill write-back:
 
 1. `openspec validate <change-id> --strict`
-2. `python scripts/openspec_loop.py plan <change-id> --advisory`
-3. Build `openspec/changes/<change-id>/seal-preview.md` per
-   `references/seal-preview-format.md`: list **every** active ref under
-   "一次性全盖", path profile expansion for this change-id, trees, policy.
-   Show it in chat as the final grilling question — not a separate chore.
-4. User accepts the packet (agree stamp / switch profile / adjust policy /
-   do not stamp). Permission and destructive ops stay alone.
-5. Only after acceptance, freeze and verify:
+2. `python scripts/generate_openspec_feature_list.py --change-id <change-id>`
+3. `python scripts/openspec_loop.py check <change-id>` and
+   `python scripts/openspec_loop.py plan <change-id>`. Missing-loop thin
+   initialization is valid and creates no configured directories.
+4. Confirm `check.ok=true`, a matching fingerprint, and no
+   `pending_irreversible_policy`. Ordinary Apply may begin at this latch without
+   a preview, stamp, or user ceremony.
+5. If the user requests audit diagnostics, or the change raises
+   `hard_ceiling`, changes retention, paths, or scope, prepare the optional
+   change-scoped `seal-preview.md` per `references/seal-preview-format.md`.
+   Obtain explicit human confirmation only for that irreversible policy, then
+   persist it with the narrow applicable options.
 
 ```powershell
-python scripts/openspec_loop.py seal <change-id> --confirmed --retention <none|thin|full> --ledger-path <path> [--autonomy supervised|full_auto] [--hard-ceiling-max-iterations N] [confirmed path and budget options]
 python scripts/openspec_loop.py check <change-id>
+python scripts/openspec_loop.py plan <change-id>
+# Optional irreversible-policy/audit persistence only:
+python scripts/openspec_loop.py seal <change-id> --confirmed [explicit policy options]
 ```
 
-Omitted options inherit the prior seal; omitted `hard_ceiling` derives headroom.
 Recommend `supervised` unless the user asked for Loop self-amend without a new
 interview; recommend `full_auto` only for repository-source deliverables.
 
-When `execution-ready` and the fingerprint still matches, one-line reuse — do
-not regenerate path questions. Policy change → rewrite preview → re-confirm.
+A remaining-work advisory does not mutate `loop.json`, does not fail the
+readiness latch, and is not a `check` warning.
 
-Do not create ledger/scratch/product/bundle directories merely by sealing.
+When `execution-ready` and the fingerprint still matches, one-line reuse — do
+not regenerate path questions. Do not ask again about D-drive, cache, or bundle
+paths. An irreversible policy change alone requires explicit confirmation.
+
+Neither thin initialization nor optional preview/stamp diagnostics create
+ledger, scratch, product, bundle, or GUI/Colab directories.
 
 ## Amendment during execution
 
@@ -144,33 +162,36 @@ Narrative drift in `proposal.md`, `design.md`, or `specs/**` is not a semantic
 amendment. Direct the caller to
 `python scripts/openspec_loop.py reseal <change-id>` (digest refresh; keep
 retention, paths, budgets, test profiles). Only a semantic change to the active
-task registry needs a new stamp ceremony.
+task registry needs the authority branch below.
 
 When Loop reports semantic fingerprint drift, `DEVIATED`, `amend_spec`, or
 `supersede_task` under `autonomy: supervised`:
 
-1. pause and preserve the disposable ledger
+1. pause the affected dispatch and preserve recorded counters
 2. compare observed vs ACCEPT / last good baseline
 3. ask only the decision that changes scope, output authority, tasks, or budget
 4. update the contract and feature index
-5. rewrite `seal-preview.md` with the **full** active ref list → user accepts →
-   `seal --confirmed` (or `reseal --allow-semantic-change --confirmed`)
+5. rebuild the fingerprint and re-run `check`/`plan`
 
-Under `autonomy: full_auto` the supervisor owns steps 2, 4, and 5 with a
-recorded `--reason`. Stay involved only for scope, retention, paths, output
-authority, or `hard_ceiling`.
+Under `autonomy: full_auto` the sole supervisor may amend the active registry
+and run `reseal --allow-semantic-change --reason <reason>`. Under `supervised`,
+return here for the material decision. Stay involved only for scope, retention,
+paths, output authority, or another decision reserved for the user.
 
-Extending budgets requires `--confirmed` under `supervised` and a recorded
-reason under `full_auto`; `hard_ceiling` caps either and rises only via
-human-confirmed `seal`.
+Ref-local Apply/unblock exhaustion is local and cannot be reset by a stamp.
+Raising an activated ref-local ceiling requires the applicable authority and a
+recorded reason. Legacy `hard_ceiling` is an ordinary-dispatch diagnostic; only
+raising it requires human confirmation.
 
 ## Handoff
 
 - design open → stay here or `$openspec-explore`
-- stamped ordinary execution → `$openspec-loop-engineering <change-id>`
+- fingerprint-ready ordinary execution → `$openspec-loop-engineering <change-id>`
 - one task without Loop → `$openspec-apply-change <change-id>`
 - residue → `$openspec-hygiene`
 - full audit → `$monitor-openspec-codex <change-id>`
 
-Report changed artifacts, stamp kind, ref coverage count, unresolved questions,
-`check` result, and the exact next command.
+Report changed artifacts, fingerprint/readiness result, ref coverage count,
+unresolved questions, any optional policy diagnostic, and the exact next
+command. Use exactly one change-local `handoff.json` if coordination metadata is
+needed; do not create another lifecycle or supervisor.

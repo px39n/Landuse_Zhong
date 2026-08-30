@@ -29,6 +29,38 @@ def write_contract(repo_root: Path, change_id: str, tasks_text: str, feature_pay
     )
 
 
+def write_thin_retention_decision(repo_root: Path, change_id: str = "demo") -> None:
+    change_dir = repo_root / "openspec" / "changes" / change_id
+    change_dir.mkdir(parents=True, exist_ok=True)
+    (change_dir / "proposal.md").write_text(
+        f"""## Artifact Retention Decision
+
+- Audit retention: `thin`
+- Retained evidence root: `auto_test_openspec/{change_id}/`
+- Disposable cache root: `test_cache/{change_id}/`
+- Pytest basetemp root: `test_cache/{change_id}/pytest/`
+- Scratch root: `test_cache/{change_id}/tmp/`
+- Product/runtime output root: `null`
+- GUI/Colab evidence root: `null`
+
+## What Changes
+""",
+        encoding="utf-8",
+    )
+
+
+def run_loop_direct(repo_root: Path, *args: str, expected_exit: int = 0) -> dict:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--repo-root", str(repo_root), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == expected_exit, result.stderr or result.stdout
+    return json.loads(result.stdout)
+
+
 def run_loop(repo_root: Path, *args: str, expected_exit: int = 0) -> dict:
     normalized = list(args)
     if normalized and normalized[0] == "plan" and "--advisory" not in normalized:
@@ -100,7 +132,7 @@ def ensure_sealed_runtime(repo_root: Path, ledger: Path) -> str:
     return json.loads(loop_path.read_text(encoding="utf-8"))["contract_fingerprint"]
 
 
-def test_stateful_commands_require_a_sealed_policy(tmp_path: Path) -> None:
+def test_stateful_commands_require_an_active_registry(tmp_path: Path) -> None:
     result = subprocess.run(
         [
             sys.executable,
@@ -122,8 +154,366 @@ def test_stateful_commands_require_a_sealed_policy(tmp_path: Path) -> None:
 
     assert result.returncode == 2
     payload = json.loads(result.stdout)
-    assert "not sealed" in payload["error"]
+    assert "missing contract artifacts" in payload["error"]
     assert not (tmp_path / "test_cache").exists()
+
+
+def test_missing_loop_auto_initializes_thin_defaults(tmp_path: Path) -> None:
+    write_contract(
+        tmp_path,
+        "demo",
+        """## Active Task Registry
+
+- [ ] 1.1 First ready ref [#R1]
+  - INDEPENDENT: yes
+- [ ] 1.2 Second ready ref [#R2]
+  - INDEPENDENT: yes
+""",
+        base_features([("R1", "1.1", False, False), ("R2", "1.2", False, False)]),
+    )
+    write_thin_retention_decision(tmp_path)
+    loop_path = tmp_path / "openspec" / "changes" / "demo" / "loop.json"
+
+    planned = run_loop_direct(tmp_path, "plan", "demo", "--batch")
+
+    assert planned["selected_batch"] == ["R1", "R2"]
+    config = json.loads(loop_path.read_text(encoding="utf-8"))
+    assert config["retention"] == "thin"
+    assert config["contract_fingerprint"] == planned["contract_fingerprint"]
+    assert config["per_ref_budgets"] == {
+        "R1": {"max_apply_attempts": 2, "max_unblock_runs": 2},
+        "R2": {"max_apply_attempts": 2, "max_unblock_runs": 2},
+    }
+    assert config["paths"] == {
+        "ledger": "test_cache/demo/loop/ledger.json",
+        "scratch": "test_cache/demo/tmp/",
+        "product": None,
+        "bundle": "auto_test_openspec/demo/",
+        "gui_colab": None,
+    }
+    assert "sealed" not in config
+    assert "confirmed_at" not in config
+    assert "hard_ceiling" not in config
+    assert not (tmp_path / "test_cache").exists()
+    assert not (tmp_path / "auto_test_openspec").exists()
+
+
+def test_first_apply_without_stamp(tmp_path: Path) -> None:
+    write_contract(
+        tmp_path,
+        "demo",
+        "## Active Task Registry\n\n- [ ] 1.1 Runtime task [#R1]\n",
+        base_features([("R1", "1.1", False, False)]),
+    )
+    write_thin_retention_decision(tmp_path)
+
+    gate = run_loop_direct(
+        tmp_path,
+        "gate",
+        "demo",
+        "--run-id",
+        "first-apply",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+    )
+
+    assert gate["decision"] == "continue"
+    assert gate["hard_ceiling"] is None
+    assert not any(reason.startswith("hard_ceiling_") for reason in gate["reasons"])
+    run_loop_direct(
+        tmp_path,
+        "record",
+        "demo",
+        "--run-id",
+        "first-apply",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--result",
+        "success",
+    )
+    config = json.loads(
+        (tmp_path / "openspec" / "changes" / "demo" / "loop.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "sealed" not in config
+    assert "confirmed_at" not in config
+    assert "hard_ceiling" not in config
+    assert not (tmp_path / "auto_test_openspec").exists()
+
+
+def write_two_ref_runtime(tmp_path: Path) -> None:
+    write_contract(
+        tmp_path,
+        "demo",
+        """## Active Task Registry
+
+- [ ] 1.1 Recover blocked ref [#R1]
+  - INDEPENDENT: yes
+- [ ] 1.2 Independent ready ref [#R2]
+  - INDEPENDENT: yes
+""",
+        base_features([("R1", "1.1", False, False), ("R2", "1.2", False, False)]),
+    )
+    write_thin_retention_decision(tmp_path)
+
+
+def record_direct_attempt(
+    tmp_path: Path,
+    kind: str,
+    result: str,
+    observation: str,
+    *,
+    disposition: str | None = None,
+) -> dict:
+    args = [
+        "record",
+        "demo",
+        "--run-id",
+        "ref-local",
+        "--ref",
+        "R1",
+        "--kind",
+        kind,
+        "--result",
+        result,
+        "--observation-text",
+        observation,
+    ]
+    if disposition is not None:
+        args.extend(["--disposition", disposition])
+    return run_loop_direct(tmp_path, *args)
+
+
+def test_dormant_unblock_requires_blocking_evidence(tmp_path: Path) -> None:
+    write_two_ref_runtime(tmp_path)
+
+    gate = run_loop_direct(
+        tmp_path,
+        "gate",
+        "demo",
+        "--run-id",
+        "ref-local",
+        "--ref",
+        "R1",
+        "--kind",
+        "unblock",
+        expected_exit=2,
+    )
+
+    assert gate["decision"] == "stop"
+    assert gate["reasons"] == ["task_unblock_dormant:R1"]
+    planned = run_loop_direct(tmp_path, "plan", "demo", "--batch")
+    assert planned["selected_batch"] == ["R1", "R2"]
+
+
+def test_ref_local_unblock_keeps_independent_ready_work(tmp_path: Path) -> None:
+    write_two_ref_runtime(tmp_path)
+    record_direct_attempt(tmp_path, "apply", "failure", "apply one")
+    record_direct_attempt(tmp_path, "verify", "blocked", "blocking evidence one")
+    record_direct_attempt(
+        tmp_path,
+        "unblock",
+        "success",
+        "repair direction one",
+        disposition="retry",
+    )
+
+    planned = run_loop_direct(tmp_path, "plan", "demo", "--batch")
+    by_ref = {task["ref"]: task for task in planned["tasks"]}
+
+    assert planned["selected_batch"] == ["R1", "R2"]
+    assert by_ref["R1"]["unblock_active"] is True
+    assert by_ref["R1"]["unblock_runs_used"] == 1
+    assert by_ref["R2"]["ready"] is True
+
+
+def test_ref_local_stop_budget_survives_legacy_stamp(tmp_path: Path) -> None:
+    write_two_ref_runtime(tmp_path)
+    record_direct_attempt(tmp_path, "apply", "failure", "apply one")
+    record_direct_attempt(tmp_path, "verify", "blocked", "blocking evidence one")
+    record_direct_attempt(
+        tmp_path,
+        "unblock",
+        "success",
+        "repair direction one",
+        disposition="retry",
+    )
+    record_direct_attempt(tmp_path, "apply", "failure", "apply two")
+    record_direct_attempt(tmp_path, "verify", "blocked", "blocking evidence two")
+    record_direct_attempt(
+        tmp_path,
+        "unblock",
+        "success",
+        "terminal budget decision",
+        disposition="stop_budget",
+    )
+
+    before_stamp = run_loop_direct(tmp_path, "plan", "demo", "--batch")
+    before_by_ref = {task["ref"]: task for task in before_stamp["tasks"]}
+    assert before_stamp["selected_batch"] == ["R2"]
+    assert before_by_ref["R1"]["effective_state"] == "maxed"
+    assert before_by_ref["R1"]["budget_disposition"] == "stop_budget"
+    assert before_by_ref["R2"]["ready"] is True
+
+    run_loop_direct(tmp_path, "seal", "demo", "--confirmed")
+    after_stamp = run_loop_direct(tmp_path, "plan", "demo", "--batch")
+    after_by_ref = {task["ref"]: task for task in after_stamp["tasks"]}
+    assert after_stamp["selected_batch"] == ["R2"]
+    assert after_by_ref["R1"]["effective_state"] == "maxed"
+    assert after_by_ref["R1"]["max_unblock_runs"] == 2
+
+
+def test_fingerprint_latch_preserves_census_during_registry_drift(
+    tmp_path: Path,
+) -> None:
+    write_two_ref_runtime(tmp_path)
+    initial = run_loop_direct(tmp_path, "plan", "demo", "--batch")
+    assert initial["selected_wave"] == ["R1", "R2"]
+
+    tasks_path = tmp_path / "openspec" / "changes" / "demo" / "tasks.md"
+    tasks_path.write_text(
+        tasks_path.read_text(encoding="utf-8").replace(
+            "Independent ready ref", "Semantically changed ready ref"
+        ),
+        encoding="utf-8",
+    )
+
+    drifted = run_loop_direct(tmp_path, "plan", "demo", "--batch")
+    checked = run_loop_direct(tmp_path, "check", "demo", expected_exit=2)
+    assert drifted["fingerprint_ready"] is False
+    assert drifted["selected_batch"] == ["R1", "R2"]
+    assert drifted["selected_wave"] == []
+    assert checked["selected_batch"] == ["R1", "R2"]
+    assert checked["selected_wave"] == []
+    assert any("fingerprint drift" in issue for issue in checked["issues"])
+
+
+def test_irreversible_policy_gate_keeps_ready_census_visible(tmp_path: Path) -> None:
+    write_two_ref_runtime(tmp_path)
+    run_loop_direct(tmp_path, "plan", "demo", "--batch")
+    loop_path = tmp_path / "openspec" / "changes" / "demo" / "loop.json"
+    config = json.loads(loop_path.read_text(encoding="utf-8"))
+    config["pending_irreversible_policy"] = ["retention"]
+    loop_path.write_text(
+        json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    planned = run_loop_direct(tmp_path, "plan", "demo", "--batch")
+    checked = run_loop_direct(tmp_path, "check", "demo", expected_exit=2)
+    blocked_gate = run_loop_direct(
+        tmp_path,
+        "gate",
+        "demo",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        expected_exit=2,
+    )
+
+    assert planned["fingerprint_ready"] is True
+    assert planned["selected_batch"] == ["R1", "R2"]
+    assert planned["selected_wave"] == []
+    assert planned["irreversible_policy_pending"] == ["retention"]
+    assert checked["selected_batch"] == ["R1", "R2"]
+    assert "unconfirmed irreversible policy" in blocked_gate["error"]
+
+
+def test_legacy_stamp_compatibility_fields_are_diagnostic(tmp_path: Path) -> None:
+    write_two_ref_runtime(tmp_path)
+    run_loop_direct(
+        tmp_path,
+        "seal",
+        "demo",
+        "--confirmed",
+        "--retention",
+        "thin",
+        "--ledger-path",
+        "test_cache/demo/loop/ledger.json",
+    )
+    loop_path = tmp_path / "openspec" / "changes" / "demo" / "loop.json"
+    legacy = json.loads(loop_path.read_text(encoding="utf-8"))
+    assert legacy["sealed"] is True
+    assert legacy["confirmed_at"]
+    assert run_loop_direct(tmp_path, "check", "demo")["ok"] is True
+
+    legacy.pop("sealed")
+    legacy.pop("confirmed_at")
+    loop_path.write_text(
+        json.dumps(legacy, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    unstamped = run_loop_direct(tmp_path, "plan", "demo", "--batch")
+    assert unstamped["fingerprint_ready"] is True
+    assert unstamped["selected_batch"] == ["R1", "R2"]
+    assert unstamped["selected_wave"] == ["R1", "R2"]
+    assert run_loop_direct(tmp_path, "check", "demo")["ok"] is True
+
+
+def test_registry_drift_latch_allows_narrative_reseal_path(tmp_path: Path) -> None:
+    write_two_ref_runtime(tmp_path)
+    run_loop_direct(tmp_path, "plan", "demo", "--batch")
+    change_dir = tmp_path / "openspec" / "changes" / "demo"
+    (change_dir / "design.md").write_text("## Updated narrative only\n", encoding="utf-8")
+
+    planned = run_loop_direct(tmp_path, "plan", "demo", "--batch")
+    gate = run_loop_direct(
+        tmp_path,
+        "gate",
+        "demo",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+    )
+
+    assert planned["fingerprint_ready"] is True
+    assert planned["selected_wave"] == ["R1", "R2"]
+    assert any("narrative drift" in warning for warning in planned["warnings"])
+    assert gate["decision"] == "continue"
+    assert any("narrative drift" in warning for warning in gate["warnings"])
+
+
+def test_registry_drift_keeps_dependency_and_diagnostics_ref_local(
+    tmp_path: Path,
+) -> None:
+    write_contract(
+        tmp_path,
+        "demo",
+        """## Active Task Registry
+
+- [ ] 1.1 Broken local dependency [#R1]
+  - DEPENDS_ON: R404
+- [ ] 1.2 Independent ready ref [#R2]
+  - INDEPENDENT: yes
+""",
+        base_features([("R1", "1.1", False, False), ("R2", "1.2", False, False)]),
+    )
+    write_thin_retention_decision(tmp_path)
+    initial = run_loop_direct(tmp_path, "plan", "demo", "--batch")
+    assert initial["selected_batch"] == ["R2"]
+    assert initial["selected_wave"] == ["R2"]
+    assert any("unknown dependency `R404`" in issue for issue in initial["issues"])
+
+    loop_path = tmp_path / "openspec" / "changes" / "demo" / "loop.json"
+    config = json.loads(loop_path.read_text(encoding="utf-8"))
+    del config["paths"]["product"]
+    loop_path.write_text(
+        json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    diagnostic = run_loop_direct(tmp_path, "plan", "demo", "--batch")
+    assert diagnostic["sealed"] is False
+    assert diagnostic["fingerprint_ready"] is True
+    assert diagnostic["wave_ready"] is True
+    assert diagnostic["selected_batch"] == ["R2"]
+    assert diagnostic["selected_wave"] == ["R2"]
 
 
 def base_features(entries: list[tuple[str, str, bool, bool]]) -> dict:
@@ -610,6 +1000,258 @@ def test_record_gate_and_summary_enforce_budgets_and_breakers(tmp_path: Path) ->
     assert "Boom failed" not in ledger.read_text(encoding="utf-8")
 
 
+def test_summary_v3_separates_apply_iterations_from_all_attempts(tmp_path: Path) -> None:
+    ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
+    write_contract(
+        tmp_path,
+        "demo",
+        "## Active Task Registry\n\n- [ ] 0.1 Runtime task [#R0]\n",
+        base_features([("R0", "0.1", False, False)]),
+    )
+    fingerprint = seal_demo(
+        tmp_path,
+        ledger,
+        "--max-total-iterations",
+        "24",
+    )["contract_fingerprint"]
+
+    for index in range(4):
+        for kind, result in (("apply", "success"), ("verify", "pass")):
+            run_loop(
+                tmp_path,
+                "record",
+                "demo",
+                "--contract-fingerprint",
+                fingerprint,
+                "--run-id",
+                "run-budget-usage",
+                "--ref",
+                f"R{index}",
+                "--kind",
+                kind,
+                "--result",
+                result,
+                "--ledger-path",
+                str(ledger),
+            )
+
+    summary = run_loop(
+        tmp_path,
+        "summary",
+        "demo",
+        "--contract-fingerprint",
+        fingerprint,
+        "--run-id",
+        "run-budget-usage",
+        "--ledger-path",
+        str(ledger),
+    )
+
+    assert summary["schema_version"] == "openspec-loop-summary.v3"
+    assert summary["revision_attempt_count"] == 8
+    assert summary["revision_apply_iterations_used"] == 4
+    assert summary["revision_apply_iterations_remaining"] == 4
+    assert summary["change_apply_iterations_used"] == 4
+    assert summary["change_apply_iterations_remaining"] == 20
+
+
+def test_two_unblocks_require_new_evidence_and_make_the_default_second_terminal(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
+    fingerprint = ensure_sealed_runtime(tmp_path, ledger)
+    assert read_config(tmp_path)["budgets"]["task"] == {
+        "max_apply_attempts": 2,
+        "max_unblock_runs": 2,
+    }
+
+    def record(
+        kind: str,
+        result: str,
+        observation: str,
+        *,
+        disposition: str | None = None,
+        expected_exit: int = 0,
+    ) -> dict:
+        args = [
+            "record",
+            "demo",
+            "--contract-fingerprint",
+            fingerprint,
+            "--run-id",
+            "run-two-unblocks",
+            "--ref",
+            "R0",
+            "--kind",
+            kind,
+            "--result",
+            result,
+            "--observation-text",
+            observation,
+            "--ledger-path",
+            str(ledger),
+        ]
+        if disposition is not None:
+            args.extend(["--disposition", disposition])
+        return run_loop(tmp_path, *args, expected_exit=expected_exit)
+
+    record("apply", "failure", "apply attempt one")
+    record("verify", "blocked", "missing evidence one")
+    first_gate = run_loop(
+        tmp_path,
+        "gate",
+        "demo",
+        "--contract-fingerprint",
+        fingerprint,
+        "--run-id",
+        "run-two-unblocks",
+        "--ref",
+        "R0",
+        "--kind",
+        "unblock",
+        "--ledger-path",
+        str(ledger),
+    )
+    assert first_gate["decision"] == "continue"
+    record("unblock", "success", "repair direction one", disposition="retry")
+
+    record("apply", "failure", "apply attempt two")
+    record("verify", "blocked", "missing evidence two")
+    second_gate = run_loop(
+        tmp_path,
+        "gate",
+        "demo",
+        "--contract-fingerprint",
+        fingerprint,
+        "--run-id",
+        "run-two-unblocks",
+        "--ref",
+        "R0",
+        "--kind",
+        "unblock",
+        "--ledger-path",
+        str(ledger),
+    )
+    assert second_gate["decision"] == "continue"
+
+    refused_retry = record(
+        "unblock",
+        "success",
+        "terminal diagnosis",
+        disposition="retry",
+        expected_exit=2,
+    )
+    assert "second unblock is terminal" in refused_retry["error"]
+    record(
+        "unblock",
+        "success",
+        "terminal diagnosis",
+        disposition="amend_spec",
+    )
+
+    third_gate = run_loop(
+        tmp_path,
+        "gate",
+        "demo",
+        "--contract-fingerprint",
+        fingerprint,
+        "--run-id",
+        "run-two-unblocks",
+        "--ref",
+        "R0",
+        "--kind",
+        "unblock",
+        "--ledger-path",
+        str(ledger),
+        expected_exit=2,
+    )
+    assert "task_unblock_budget_exhausted:R0:2" in third_gate["reasons"]
+
+
+def test_second_unblock_rejects_repeated_blocking_evidence(tmp_path: Path) -> None:
+    ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
+    fingerprint = ensure_sealed_runtime(tmp_path, ledger)
+    for index in range(2):
+        run_loop(
+            tmp_path,
+            "record",
+            "demo",
+            "--contract-fingerprint",
+            fingerprint,
+            "--run-id",
+            "run-repeated-unblock",
+            "--ref",
+            "R0",
+            "--kind",
+            "apply",
+            "--result",
+            "failure",
+            "--observation-text",
+            f"apply {index}",
+            "--ledger-path",
+            str(ledger),
+        )
+        run_loop(
+            tmp_path,
+            "record",
+            "demo",
+            "--contract-fingerprint",
+            fingerprint,
+            "--run-id",
+            "run-repeated-unblock",
+            "--ref",
+            "R0",
+            "--kind",
+            "verify",
+            "--result",
+            "blocked",
+            "--observation-text",
+            "same blocking evidence",
+            "--ledger-path",
+            str(ledger),
+        )
+        if index == 0:
+            run_loop(
+                tmp_path,
+                "record",
+                "demo",
+                "--contract-fingerprint",
+                fingerprint,
+                "--run-id",
+                "run-repeated-unblock",
+                "--ref",
+                "R0",
+                "--kind",
+                "unblock",
+                "--result",
+                "success",
+                "--observation-text",
+                "first repair",
+                "--disposition",
+                "retry",
+                "--ledger-path",
+                str(ledger),
+            )
+
+    gate = run_loop(
+        tmp_path,
+        "gate",
+        "demo",
+        "--contract-fingerprint",
+        fingerprint,
+        "--run-id",
+        "run-repeated-unblock",
+        "--ref",
+        "R0",
+        "--kind",
+        "unblock",
+        "--ledger-path",
+        str(ledger),
+        expected_exit=2,
+    )
+    assert "second_unblock_requires_new_evidence:R0" in gate["reasons"]
+
+
 def test_gate_stops_after_two_no_progress_attempts_and_one_explore_budget(tmp_path: Path) -> None:
     ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
     fingerprint = "xyz789"
@@ -702,24 +1344,48 @@ def test_gate_stops_after_two_no_progress_attempts_and_one_explore_budget(tmp_pa
     assert "no_progress_breaker" in no_progress_gate["reasons"]
 
 
-def test_gate_treats_max_subagents_as_distinct_allocated_subagents_per_run(tmp_path: Path) -> None:
-    ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
-    fingerprint = "active-subagents"
+def test_headcount_fields_are_diagnostic_and_do_not_reduce_wave_or_allowance(
+    tmp_path: Path,
+) -> None:
+    tasks = """## Active Task Registry
 
-    run_loop(
+- [ ] 1.1 Ref one [#R1]
+  - INDEPENDENT: yes
+  - FILES: `src/a.py`
+  - WRITE_SCOPE: `src/a.py`
+- [ ] 1.2 Ref two [#R2]
+  - INDEPENDENT: yes
+  - FILES: `tests/test_a.py`
+  - WRITE_SCOPE: `tests/test_a.py`
+- [ ] 1.3 Ref three [#R3]
+  - INDEPENDENT: yes
+  - FILES: `docs/a.md`
+  - WRITE_SCOPE: `docs/a.md`
+"""
+    write_contract(
         tmp_path,
-        "record",
         "demo",
-        "--contract-fingerprint",
-        fingerprint,
+        tasks,
+        base_features([("R1", "1.1", False, False), ("R2", "1.2", False, False), ("R3", "1.3", False, False)]),
+    )
+    write_thin_retention_decision(tmp_path)
+    plan = run_loop_direct(tmp_path, "plan", "demo")
+    assert plan["selected_wave"] == ["R1", "R2", "R3"]
+    assert plan["allowed_parallel_applies"] == 3
+
+    ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
+    gate = run_loop(
+        tmp_path,
+        "gate",
+        "demo",
         "--run-id",
         "run-c",
         "--ref",
-        "R8",
+        "R1",
         "--kind",
-        "explore",
-        "--result",
-        "success",
+        "apply",
+        "--max-subagents",
+        "1",
         "--subagent-id",
         "agent-a",
         "--subagent-id",
@@ -727,47 +1393,8 @@ def test_gate_treats_max_subagents_as_distinct_allocated_subagents_per_run(tmp_p
         "--ledger-path",
         str(ledger),
     )
-    run_loop(
-        tmp_path,
-        "record",
-        "demo",
-        "--contract-fingerprint",
-        fingerprint,
-        "--run-id",
-        "run-c",
-        "--ref",
-        "R8",
-        "--kind",
-        "verify",
-        "--result",
-        "success",
-        "--subagent-id",
-        "agent-a",
-        "--ledger-path",
-        str(ledger),
-    )
-
-    gate = run_loop(
-        tmp_path,
-        "gate",
-        "demo",
-        "--contract-fingerprint",
-        fingerprint,
-        "--run-id",
-        "run-c",
-        "--ref",
-        "R8",
-        "--kind",
-        "apply",
-        "--max-subagents",
-        "2",
-        "--subagent-id",
-        "agent-c",
-        "--ledger-path",
-        str(ledger),
-        expected_exit=2,
-    )
-    assert "revision_max_subagents_exceeded:2" in gate["reasons"]
+    assert gate["decision"] == "continue"
+    assert not any("max_subagents" in reason for reason in gate["reasons"])
 
 
 def test_gate_budgets_span_run_ids_within_one_revision(tmp_path: Path) -> None:
@@ -982,13 +1609,14 @@ def test_gate_counts_active_duration_not_wall_clock_waiting(tmp_path: Path) -> N
     assert "revision_active_minutes_reached:1" in active_budget_gate["reasons"]
 
 
-def test_seal_is_required_and_contract_drift_pauses_execution(tmp_path: Path) -> None:
+def test_fingerprint_initialization_and_contract_drift_pauses_execution(tmp_path: Path) -> None:
     tasks = """## Active Task Registry
 
 - [ ] 1.1 Implement parser [#R1]
   - DEPENDS_ON: none
-"""
+    """
     write_contract(tmp_path, "demo", tasks, base_features([("R1", "1.1", False, False)]))
+    write_thin_retention_decision(tmp_path)
 
     unsealed = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--repo-root", str(tmp_path), "plan", "demo"],
@@ -1000,27 +1628,18 @@ def test_seal_is_required_and_contract_drift_pauses_execution(tmp_path: Path) ->
     assert unsealed.returncode == 0
     unsealed_payload = json.loads(unsealed.stdout)
     assert unsealed_payload["candidate_ref"] == "R1"
-    assert unsealed_payload["selected_ref"] is None
-
-    ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
-    seal = run_loop(
-        tmp_path,
-        "seal",
-        "demo",
-        "--confirmed",
-        "--retention",
-        "thin",
-        "--ledger-path",
-        str(ledger),
-    )
-    assert seal["written"] is True
-    assert run_loop(tmp_path, "check", "demo")["ok"] is True
+    assert unsealed_payload["selected_ref"] == "R1"
+    assert unsealed_payload["selected_batch"] == ["R1"]
+    assert unsealed_payload["selected_wave"] == ["R1"]
+    assert run_loop_direct(tmp_path, "check", "demo")["ok"] is True
 
     (tmp_path / "openspec" / "changes" / "demo" / "tasks.md").write_text(
         tasks.replace("Implement parser", "Implement parser safely"),
         encoding="utf-8",
     )
     drift = run_loop(tmp_path, "check", "demo", expected_exit=2)
+    assert drift["selected_batch"] == ["R1"]
+    assert drift["selected_wave"] == []
     assert any("fingerprint drift" in issue for issue in drift["issues"])
 
 
@@ -1052,7 +1671,7 @@ def test_check_rejects_incomplete_or_invalid_sealed_policy(tmp_path: Path) -> No
         in checked["issues"]
     )
     assert "loop.json test_profiles missing: promotion" in checked["issues"]
-    assert "loop.json confirmed_at is required" in checked["issues"]
+    assert not any("confirmed_at" in issue for issue in checked["issues"])
 
 
 def test_plan_skips_maxed_task_and_selects_its_replacement(tmp_path: Path) -> None:
@@ -1234,7 +1853,7 @@ def test_semantic_fingerprint_survives_promotion_and_narrative_edits(tmp_path: P
     assert reworded["contract_fingerprint"] != before["contract_fingerprint"]
 
 
-def test_advisory_narrative_drift_warns_while_strict_blocks(tmp_path: Path) -> None:
+def test_narrative_drift_warns_under_advisory_and_legacy_strict(tmp_path: Path) -> None:
     write_contract(
         tmp_path,
         "demo",
@@ -1255,9 +1874,12 @@ def test_advisory_narrative_drift_warns_while_strict_blocks(tmp_path: Path) -> N
 
     seal_demo(tmp_path, ledger, "--narrative-policy", "strict")
     write_narrative(tmp_path, "demo", "third")
-    strict = run_loop(tmp_path, "check", "demo", expected_exit=2)
-    assert strict["ok"] is False
-    assert any("narrative drift" in issue for issue in strict["issues"])
+    strict = run_loop(tmp_path, "check", "demo")
+    assert strict["ok"] is True
+    assert strict["sealed"] is True
+    assert strict["selected_wave"] == ["R1"]
+    assert any("narrative drift" in warning for warning in strict["warnings"])
+    assert not any("narrative drift" in issue for issue in strict["issues"])
 
 
 def test_reseal_refreshes_narrative_and_refuses_a_semantic_change(tmp_path: Path) -> None:
@@ -1513,7 +2135,7 @@ def seal_ceiling_demo(tmp_path: Path, *extra: str) -> Path:
     return ledger
 
 
-def test_hard_ceiling_is_derived_at_seal_and_bounds_gate_overrides(tmp_path: Path) -> None:
+def test_hard_ceiling_is_derived_at_seal_but_does_not_bound_gate_overrides(tmp_path: Path) -> None:
     ledger = seal_ceiling_demo(tmp_path)
     config = read_config(tmp_path)
     assert config["hard_ceiling"] == {
@@ -1542,12 +2164,13 @@ def test_hard_ceiling_is_derived_at_seal_and_bounds_gate_overrides(tmp_path: Pat
     )
     assert gate["decision"] == "continue"
     assert gate["terminal"] is False
-    assert gate["budgets"]["revision"]["max_iterations"] == 60
-    assert gate["budgets"]["revision"]["max_active_minutes"] == 1080
+    assert gate["budgets"]["revision"]["max_iterations"] == 999
+    assert gate["budgets"]["revision"]["max_active_minutes"] == 99999
+    assert gate["hard_ceiling"] == config["hard_ceiling"]
     assert gate["self_extensions_used"] == 0
 
 
-def test_hard_ceiling_stops_the_gate_as_a_terminal_decision(tmp_path: Path) -> None:
+def test_hard_ceiling_remains_diagnostic_after_change_budget_stop(tmp_path: Path) -> None:
     ledger = seal_ceiling_demo(
         tmp_path,
         "--max-total-iterations",
@@ -1601,8 +2224,9 @@ def test_hard_ceiling_stops_the_gate_as_a_terminal_decision(tmp_path: Path) -> N
         str(ledger),
         expected_exit=2,
     )
-    assert "hard_ceiling_iterations_reached:5" in terminal["reasons"]
-    assert terminal["terminal"] is True
+    assert "change_max_iterations_reached:5" in terminal["reasons"]
+    assert not any(reason.startswith("hard_ceiling_") for reason in terminal["reasons"])
+    assert terminal["terminal"] is False
 
 
 def test_reseal_never_raises_hard_ceiling_and_refuses_a_budget_above_it(
@@ -1962,7 +2586,7 @@ def test_plan_batch_offers_every_independent_ready_ref(tmp_path: Path) -> None:
 
     single = run_loop(tmp_path, "plan", "demo")
     assert single["selected_ref"] == "R2"
-    assert single["selected_batch"] == ["R2"]
+    assert single["selected_batch"] == ["R2", "R3"]
 
     batched = run_loop(tmp_path, "plan", "demo", "--batch")
     assert batched["selected_ref"] == "R2"
@@ -2014,6 +2638,565 @@ def test_plan_batch_is_empty_without_a_selected_ref(tmp_path: Path) -> None:
     batched = run_loop(tmp_path, "plan", "demo", "--batch")
     assert batched["selected_ref"] is None
     assert batched["selected_batch"] == []
+
+
+def test_selected_batch_census_keeps_all_ready_refs_visible_without_batch_flag(
+    tmp_path: Path,
+) -> None:
+    tasks = """## Active Task Registry
+
+- [ ] 1.1 First ref [#R1]
+  - INDEPENDENT: yes
+- [ ] 1.2 Second ref [#R2]
+  - INDEPENDENT: yes
+- [ ] 1.3 Broken dep [#R3]
+  - DEPENDS_ON: R404
+"""
+    write_contract(
+        tmp_path,
+        "demo",
+        tasks,
+        base_features(
+            [("R1", "1.1", False, False), ("R2", "1.2", False, False), ("R3", "1.3", False, False)]
+        ),
+    )
+    write_thin_retention_decision(tmp_path)
+
+    payload = run_loop_direct(tmp_path, "plan", "demo")
+
+    assert payload["selected_ref"] == "R1"
+    assert payload["selected_batch"] == ["R1", "R2"]
+    assert payload["selected_wave"] == ["R1", "R2"]
+
+
+def test_selected_wave_write_scope_partitions_overlaps_without_truncating_three_way_wave(
+    tmp_path: Path,
+) -> None:
+    tasks = """## Active Task Registry
+
+- [ ] 1.1 Implement core [#R1]
+  - INDEPENDENT: yes
+  - FILES: `src/a.py`
+  - WRITE_SCOPE: `src/a.py`
+- [ ] 1.2 Add tests [#R2]
+  - INDEPENDENT: yes
+  - FILES: `tests/test_a.py`
+  - WRITE_SCOPE: `tests/test_a.py`
+- [ ] 1.3 Update docs [#R3]
+  - INDEPENDENT: yes
+  - FILES: `docs/a.md`
+  - WRITE_SCOPE: `docs/a.md`
+- [ ] 1.4 Overlap docs [#R4]
+  - INDEPENDENT: yes
+  - FILES: `docs/a.md`
+  - WRITE_SCOPE: `docs/a.md`
+"""
+    write_contract(
+        tmp_path,
+        "demo",
+        tasks,
+        base_features(
+            [
+                ("R1", "1.1", False, False),
+                ("R2", "1.2", False, False),
+                ("R3", "1.3", False, False),
+                ("R4", "1.4", False, False),
+            ]
+        ),
+    )
+    write_thin_retention_decision(tmp_path)
+
+    payload = run_loop_direct(tmp_path, "plan", "demo")
+    by_ref = {item["ref"]: item for item in payload["tasks"]}
+
+    assert payload["selected_batch"] == ["R1", "R2", "R3", "R4"]
+    assert payload["selected_wave"] == ["R1", "R2", "R3"]
+    assert payload["allowed_parallel_applies"] == 3
+    assert by_ref["R4"]["wave_eligible"] is False
+    assert "write_scope_overlap" in by_ref["R4"]["wave_blockers"]
+
+
+def test_dependency_contract_errors_stay_local_to_bad_refs(tmp_path: Path) -> None:
+    tasks = """## Active Task Registry
+
+- [ ] 1.1 Good ref [#R1]
+  - INDEPENDENT: yes
+- [ ] 1.2 Unknown dep [#R2]
+  - DEPENDS_ON: R404
+- [ ] 1.3 Good sibling [#R3]
+  - INDEPENDENT: yes
+"""
+    write_contract(
+        tmp_path,
+        "demo",
+        tasks,
+        base_features(
+            [("R1", "1.1", False, False), ("R2", "1.2", False, False), ("R3", "1.3", False, False)]
+        ),
+    )
+    write_thin_retention_decision(tmp_path)
+
+    payload = run_loop_direct(tmp_path, "plan", "demo")
+    by_ref = {item["ref"]: item for item in payload["tasks"]}
+
+    assert payload["selected_batch"] == ["R1", "R3"]
+    assert payload["selected_wave"] == ["R1", "R3"]
+    assert by_ref["R2"]["ready"] is False
+    assert "unknown dependency `R404`" in "\n".join(by_ref["R2"]["issues"])
+
+
+def write_apply_wave_contract(tmp_path: Path, count: int = 3) -> None:
+    lines = ["## Active Task Registry", ""]
+    features = []
+    for index in range(1, count + 1):
+        lines.extend(
+            [
+                f"- [ ] 1.{index} Apply ref {index} [#R{index}]",
+                "  - INDEPENDENT: yes",
+                f"  - FILES: `src/ref{index}.py`",
+                f"  - WRITE_SCOPE: `src/ref{index}.py`",
+            ]
+        )
+        features.append((f"R{index}", f"1.{index}", False, False))
+    write_contract(tmp_path, "demo", "\n".join(lines) + "\n", base_features(features))
+    write_thin_retention_decision(tmp_path)
+
+
+def test_allowed_parallel_applies_limits_dispatch_without_truncating_wave(
+    tmp_path: Path,
+) -> None:
+    write_apply_wave_contract(tmp_path)
+    initial = run_loop_direct(tmp_path, "plan", "demo")
+    assert initial["selected_wave"] == ["R1", "R2", "R3"]
+
+    loop_path = tmp_path / "openspec" / "changes" / "demo" / "loop.json"
+    config = json.loads(loop_path.read_text(encoding="utf-8"))
+    config["budgets"]["revision"]["max_iterations"] = 1
+    loop_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+
+    limited = run_loop_direct(tmp_path, "plan", "demo")
+    assert limited["selected_wave"] == ["R1", "R2", "R3"]
+    assert limited["allowed_parallel_applies"] == 1
+    assert limited["dispatch_refs"] == ["R1"]
+
+    run_loop_direct(
+        tmp_path,
+        "record",
+        "demo",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--result",
+        "completed",
+        "--attempt-id",
+        "attempt-r1",
+        "--role-id",
+        "implementer",
+        "--changed-file",
+        "src/ref1.py",
+        "--evidence",
+        "inspect:R1",
+    )
+    exhausted = run_loop_direct(tmp_path, "plan", "demo")
+    assert exhausted["apply_remaining"] == 0
+    assert exhausted["selected_wave"] == ["R1", "R2", "R3"]
+    assert exhausted["allowed_parallel_applies"] == 0
+    assert exhausted["dispatch_refs"] == []
+
+
+def test_apply_identity_is_one_supervisor_record_per_ref_attempt(
+    tmp_path: Path,
+) -> None:
+    write_apply_wave_contract(tmp_path, count=1)
+    run_loop_direct(tmp_path, "plan", "demo")
+    common = (
+        "record",
+        "demo",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--result",
+        "completed",
+        "--attempt-id",
+        "attempt-one",
+        "--role-id",
+        "implementer",
+        "--changed-file",
+        "src/ref1.py",
+        "--evidence",
+        "inspect:R1",
+    )
+    recorded = run_loop_direct(tmp_path, *common)
+    assert recorded["attempt_id"] == "attempt-one"
+    assert recorded["apply_record_owner"] == "supervisor"
+    duplicate = run_loop_direct(tmp_path, *common, expected_exit=2)
+    assert "duplicate canonical Apply attempt_id" in duplicate["error"]
+
+    worker = run_loop_direct(
+        tmp_path,
+        "record",
+        "demo",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--result",
+        "failed",
+        "--attempt-id",
+        "attempt-two",
+        "--record-owner",
+        "worker",
+        expected_exit=2,
+    )
+    assert "only the supervisor" in worker["error"]
+    combined = run_loop_direct(
+        tmp_path,
+        "record",
+        "demo",
+        "--ref",
+        "R1,R2",
+        "--kind",
+        "apply",
+        "--result",
+        "failed",
+        "--attempt-id",
+        "attempt-three",
+        expected_exit=2,
+    )
+    assert "exactly one ref" in combined["error"]
+    role_drift = run_loop_direct(
+        tmp_path,
+        "record",
+        "demo",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--result",
+        "failed",
+        "--attempt-id",
+        "attempt-four",
+        "--role-id",
+        "test-engineer",
+        expected_exit=2,
+    )
+    assert "Role ID does not match" in role_drift["error"]
+
+
+def test_role_write_allowlist_stays_within_packet_scope_and_evidence_root(
+    tmp_path: Path,
+) -> None:
+    tasks = """## Active Task Registry
+
+- [ ] 1.1 Implementation [#R1]
+  - INDEPENDENT: yes
+  - ROLE_ID: implementer
+  - FILES: `src/pkg/**`
+  - WRITE_SCOPE: `src/pkg/**`
+- [ ] 1.2 Tests [#R2]
+  - INDEPENDENT: yes
+  - ROLE_ID: test-engineer
+  - FILES: `tests/**`
+  - WRITE_SCOPE: `tests/**`, `src/test_support/**`
+- [ ] 1.3 Browser evidence [#R3]
+  - INDEPENDENT: yes
+  - ROLE_ID: browser-qa-runner
+  - FILES: `auto_test_openspec/demo/**`
+  - WRITE_SCOPE: `auto_test_openspec/demo/**`
+- [ ] 1.4 Review [#R4]
+  - INDEPENDENT: yes
+  - ROLE_ID: code-reviewer
+  - FILES: `docs/**`
+  - WRITE_SCOPE: `docs/**`
+"""
+    write_contract(
+        tmp_path,
+        "demo",
+        tasks,
+        base_features([(f"R{i}", f"1.{i}", False, False) for i in range(1, 5)]),
+    )
+    write_thin_retention_decision(tmp_path)
+    run_loop_direct(tmp_path, "plan", "demo")
+
+    def record(ref: str, attempt: str, role: str, changed: str, exit_code: int = 0) -> dict:
+        return run_loop_direct(
+            tmp_path,
+            "record",
+            "demo",
+            "--ref",
+            ref,
+            "--kind",
+            "apply",
+            "--result",
+            "completed",
+            "--attempt-id",
+            attempt,
+            "--role-id",
+            role,
+            "--changed-file",
+            changed,
+            "--evidence",
+            f"inspect:{ref}",
+            expected_exit=exit_code,
+        )
+
+    assert record("R1", "impl-ok", "implementer", "src/pkg/core.py")["attempt_id"] == "impl-ok"
+    assert "write_scope_violation" in record(
+        "R1", "impl-outside", "implementer", "src/other.py", 2
+    )["error"]
+    assert record("R2", "tests-ok", "test-engineer", "tests/test_core.py")["attempt_id"] == "tests-ok"
+    assert "tests_only" in record(
+        "R2", "tests-source", "test-engineer", "src/test_support/data.txt", 2
+    )["error"]
+    assert record(
+        "R3", "evidence-ok", "browser-qa-runner", "auto_test_openspec/demo/browser.json"
+    )["attempt_id"] == "evidence-ok"
+    assert "evidence_root" in record(
+        "R3", "evidence-outside", "browser-qa-runner", "outputs/browser.json", 2
+    )["error"]
+    assert "read-only" in record(
+        "R4", "review-write", "code-reviewer", "docs/review.md", 2
+    )["error"]
+
+
+def test_shared_wave_join_blocks_early_verify_but_failed_sibling_is_local(
+    tmp_path: Path,
+) -> None:
+    write_apply_wave_contract(tmp_path, count=2)
+    plan = run_loop_direct(tmp_path, "plan", "demo")
+    join_id = plan["routing"][0]["join_id"]
+
+    narrowed = run_loop_direct(
+        tmp_path,
+        "record",
+        "demo",
+        "--run-id",
+        "wave-run",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--result",
+        "completed",
+        "--attempt-id",
+        "narrowed-attempt",
+        "--role-id",
+        "implementer",
+        "--evidence",
+        "inspect:R1",
+        "--join-id",
+        join_id,
+        "--wave-ref",
+        "R1",
+        expected_exit=2,
+    )
+    assert "wave_refs must equal" in narrowed["error"]
+
+    def apply(ref: str, result: str) -> dict:
+        return run_loop_direct(
+            tmp_path,
+            "record",
+            "demo",
+            "--run-id",
+            "wave-run",
+            "--ref",
+            ref,
+            "--kind",
+            "apply",
+            "--result",
+            result,
+            "--attempt-id",
+            f"attempt-{ref.lower()}",
+            "--role-id",
+            "implementer",
+            "--changed-file",
+            f"src/ref{ref[1:]}.py",
+            "--evidence",
+            f"inspect:{ref}",
+            "--join-id",
+            join_id,
+            "--wave-ref",
+            "R1",
+            "--wave-ref",
+            "R2",
+        )
+
+    apply("R1", "completed")
+    early = run_loop_direct(
+        tmp_path,
+        "gate",
+        "demo",
+        "--run-id",
+        "wave-run",
+        "--ref",
+        "R1",
+        "--kind",
+        "verify",
+        expected_exit=2,
+    )
+    assert any("wave_join_pending" in reason for reason in early["reasons"])
+
+    apply("R2", "failed")
+    own_ok = run_loop_direct(
+        tmp_path,
+        "gate",
+        "demo",
+        "--run-id",
+        "wave-run",
+        "--ref",
+        "R1",
+        "--kind",
+        "verify",
+    )
+    assert own_ok["decision"] == "continue"
+    sibling_failed = run_loop_direct(
+        tmp_path,
+        "gate",
+        "demo",
+        "--run-id",
+        "wave-run",
+        "--ref",
+        "R2",
+        "--kind",
+        "verify",
+        expected_exit=2,
+    )
+    assert any("verify_requires_completed_apply:R2:failed" in reason for reason in sibling_failed["reasons"])
+
+
+def test_retry_ownership_keeps_transient_retries_inside_one_apply_attempt(
+    tmp_path: Path,
+) -> None:
+    write_apply_wave_contract(tmp_path, count=1)
+    run_loop_direct(tmp_path, "plan", "demo")
+    run_loop_direct(
+        tmp_path,
+        "record",
+        "demo",
+        "--run-id",
+        "retry-run",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--result",
+        "failed",
+        "--attempt-id",
+        "attempt-retry",
+        "--role-id",
+        "implementer",
+        "--transient-retries",
+        "2",
+    )
+    summary = run_loop_direct(tmp_path, "summary", "demo", "--run-id", "retry-run")
+    assert summary["revision_apply_iterations_used"] == 1
+    latest = summary["latest_attempt"]
+    assert latest["transient_retries"] == 2
+    assert latest["auto_redispatch"] is False
+    assert latest["next_apply_owner"] == "supervisor_gate"
+    next_gate = run_loop_direct(
+        tmp_path,
+        "gate",
+        "demo",
+        "--run-id",
+        "retry-run",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+    )
+    assert next_gate["decision"] == "continue"
+
+
+def test_zero_apply_actions_use_no_apply_budget_or_scheduling_headcount(
+    tmp_path: Path,
+) -> None:
+    tasks = """## Active Task Registry
+
+- [ ] 1.1 Worker Apply [#R1]
+  - INDEPENDENT: yes
+  - FILES: `src/ref1.py`
+  - WRITE_SCOPE: `src/ref1.py`
+- [ ] 1.2 Supervisor-direct Apply [#R2]
+  - INDEPENDENT: yes
+"""
+    write_contract(
+        tmp_path,
+        "demo",
+        tasks,
+        base_features([("R1", "1.1", False, False), ("R2", "1.2", False, False)]),
+    )
+    write_thin_retention_decision(tmp_path)
+    run_loop_direct(tmp_path, "plan", "demo")
+    for kind, result in (
+        ("goal", "success"),
+        ("stop_hook", "success"),
+        ("review", "success"),
+        ("verify", "pass"),
+    ):
+        run_loop_direct(
+            tmp_path,
+            "record",
+            "demo",
+            "--run-id",
+            "zero-run",
+            "--ref",
+            "R1",
+            "--kind",
+            kind,
+            "--result",
+            result,
+            "--subagent-id",
+            f"trace-{kind}",
+        )
+    summary = run_loop_direct(tmp_path, "summary", "demo", "--run-id", "zero-run")
+    assert summary["revision_apply_iterations_used"] == 0
+    assert all(
+        item["consumes_apply_attempt"] is False
+        and item["consumes_scheduling_headcount"] is False
+        and item["allocated_subagent_ids"] == []
+        for item in summary["attempts"]
+    )
+    gate = run_loop_direct(
+        tmp_path,
+        "gate",
+        "demo",
+        "--run-id",
+        "zero-run",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--max-subagents",
+        "1",
+        "--current-allocated-subagents",
+        "99",
+    )
+    assert gate["decision"] == "continue"
+
+    run_loop_direct(
+        tmp_path,
+        "record",
+        "demo",
+        "--run-id",
+        "direct-run",
+        "--ref",
+        "R2",
+        "--kind",
+        "apply",
+        "--result",
+        "completed",
+        "--attempt-id",
+        "direct-attempt",
+        "--evidence",
+        "inspect:R2",
+    )
+    direct = run_loop_direct(tmp_path, "summary", "demo", "--run-id", "direct-run")
+    assert direct["revision_apply_iterations_used"] == 1
+    assert direct["latest_attempt"]["role_id"] == "rose"
+    assert direct["latest_attempt"]["consumes_scheduling_headcount"] is False
 
 
 GOAL_TASKS = """## Active Task Registry
@@ -2375,7 +3558,7 @@ def test_apply_revision_refuses_a_proposal_without_an_executable_test(
     assert (change_dir / "tasks.md").read_bytes() == before
 
 
-def test_apply_revision_stops_at_the_hard_ceiling(tmp_path: Path) -> None:
+def test_apply_revision_reports_change_budget_without_global_hard_ceiling_terminal(tmp_path: Path) -> None:
     ledger = seal_revisable_demo(
         tmp_path,
         "--autonomy",
@@ -2412,8 +3595,9 @@ def test_apply_revision_stops_at_the_hard_ceiling(tmp_path: Path) -> None:
     )
 
     assert refused["applied"] is False
-    assert refused["terminal"] is True
-    assert any("hard_ceiling_iterations_reached:2" in issue for issue in refused["issues"])
+    assert refused["terminal"] is False
+    assert any("change_max_iterations_reached:2" in issue for issue in refused["issues"])
+    assert not any("hard_ceiling_iterations_reached" in issue for issue in refused["issues"])
     assert (change_dir / "tasks.md").read_bytes() == before
 
 
@@ -2458,6 +3642,83 @@ def test_a_confirmed_change_budget_is_never_rescaled(tmp_path: Path) -> None:
 
     run_loop(tmp_path, "seal", "demo", "--confirmed")
     assert read_config(tmp_path)["budgets"]["change"]["max_iterations"] == 5
+
+
+def test_semantic_seal_reports_task_derived_budget_shortfall_without_rescaling(
+    tmp_path: Path,
+) -> None:
+    write_large_registry(tmp_path, 12)
+    ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
+    seal_demo(tmp_path, ledger, "--max-total-iterations", "24")
+
+    write_large_registry(tmp_path, 19)
+    restamped = run_loop(tmp_path, "seal", "demo", "--confirmed")
+
+    assert restamped["semantic_change"] is True
+    assert restamped["budget_advisories"] == [
+        {
+            "field": "budgets.change.max_iterations",
+            "configured": 24,
+            "recommended": 38,
+            "shortfall": 14,
+        }
+    ]
+    assert read_config(tmp_path)["budgets"]["change"]["max_iterations"] == 24
+
+
+def test_semantic_reseal_reports_the_same_non_mutating_budget_advisory(
+    tmp_path: Path,
+) -> None:
+    write_large_registry(tmp_path, 12)
+    ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
+    seal_demo(tmp_path, ledger, "--max-total-iterations", "24")
+
+    write_large_registry(tmp_path, 19)
+    restamped = run_loop(
+        tmp_path,
+        "reseal",
+        "demo",
+        "--allow-semantic-change",
+        "--confirmed",
+    )
+
+    assert restamped["semantic_change"] is True
+    advisory = restamped["budget_advisories"][0]
+    assert advisory == {
+        "field": "budgets.change.max_iterations",
+        "configured": 24,
+        "recommended": 38,
+        "shortfall": 14,
+    }
+    assert "basis" not in advisory
+    assert read_config(tmp_path)["budgets"]["change"]["max_iterations"] == 24
+
+
+def write_mixed_registry(tmp_path: Path, passed: int, pending: int) -> None:
+    lines = ["## Active Task Registry", ""]
+    entries = []
+    for index in range(1, passed + pending + 1):
+        done = index <= passed
+        mark = "x" if done else " "
+        lines.append(f"- [{mark}] 1.{index} Task {index} [#R{index}]")
+        lines.append("  - INDEPENDENT: yes")
+        entries.append((f"R{index}", f"1.{index}", done, done))
+    write_contract(tmp_path, "demo", "\n".join(lines) + "\n", base_features(entries))
+
+
+def test_restamp_does_not_warn_when_remaining_work_fits(
+    tmp_path: Path,
+) -> None:
+    write_large_registry(tmp_path, 12)
+    ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
+    seal_demo(tmp_path, ledger, "--max-total-iterations", "24")
+
+    write_mixed_registry(tmp_path, passed=13, pending=6)
+    restamped = run_loop(tmp_path, "seal", "demo", "--confirmed")
+
+    assert restamped["semantic_change"] is True
+    assert restamped["budget_advisories"] == []
+    assert read_config(tmp_path)["budgets"]["change"]["max_iterations"] == 24
 
 
 def test_ledger_lineage_names_the_episode_an_amendment_continues(
