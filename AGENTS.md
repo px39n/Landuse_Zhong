@@ -93,19 +93,22 @@ policy analysis, and Earth Engine/GCS execution.
 - `.agents/skills/` is the semantic source for the Loop skill series; use
   `python scripts/sync_openspec_loop_skills.py` to refresh `.codex` and
   `.claude` mirrors without replacing platform metadata.
-- Loop may execute only after interviewer confirmation and a matching sealed
-  `loop.json`. First-time start-work authority is a natural **stamp** after
-  grilling: accept change-scoped `seal-preview.md` for the complete active
-  registry, path profile, retention, budgets, `autonomy`, and `hard_ceiling`,
-  then `seal --confirmed` freezes that acceptance. `promote` never stamps.
-- Narrative drift in `proposal.md`/`design.md`/`specs/**` is refreshed with
+- Loop start-work is an agent integrity latch, not a user stamp ceremony.
+  Apply may proceed when `check`/`plan` see a `loop.json` whose
+  `contract_fingerprint` matches the active task registry, or when the
+  supervisor writes that file from thin defaults and inherited budgets.
+  Narrative changes in `proposal.md`/`design.md`/`specs/**` are refreshed with
   `python scripts/openspec_loop.py reseal <change-id>` and execution continues;
-  a semantic change to the active task registry pauses the episode. Promoting
-  a task checkbox is not drift.
-- A semantic pause follows the sealed `autonomy` field: `supervised` requires
-  confirmation of the changed fields and resealing, while `full_auto` permits
-  a recorded `--reason` below the sealed `hard_ceiling`. Only a human-confirmed
-  `seal` may raise that ceiling.
+  semantic task-registry drift pauses under `supervised`, or the supervisor
+  restamps with `--allow-semantic-change --reason` under `full_auto`.
+  Promoting a checkbox is not drift. `promote` never stamps. Do not copy
+  another change's external path tree as the default.
+- User confirmation is required only for irreversible policy: raising
+  `hard_ceiling`, changing retention, paths, or scope, destructive external
+  writes, credentials, product `--commit` runs, or `git push`/PR/`master`.
+  Ordinary thin defaults do not need `seal --confirmed` before the first
+  Apply. `seal-preview.md` is optional grilling output, not a start-work gate.
+  Autonomy never authorizes the irreversible list above.
 - Default to `thin` retention, finite budgets, compact feature state, and
   attempt/promotion/final test tiers. Reuse confirmed GCS, D-drive, cache, and
   product paths instead of asking for them again on every attempt.

@@ -1,13 +1,17 @@
-# Seal preview format (盖章预览)
+# Optional seal preview / audit diagnostic format (可选盖章预览)
 
-`seal` = **开工盖章**：把当前整份 active 合同义务 + 落盘档位 + 预算/autonomy/ceiling
-冻进 `loop.json`。它不勾选任何任务；`promote` 才勾选。一次盖章覆盖指纹内
-**全部** active `[#R…]`（一次性全盖义务面）。
+`seal-preview.md` is an **optional audit diagnostic** for reviewing retention,
+paths, budgets, `autonomy`, `hard_ceiling`, and whole-registry fingerprint
+coverage. It is not a start-work gate. Ordinary Apply/dispatch does not require
+this file, `confirmed_at`, or `seal --confirmed` when the recorded
+`contract_fingerprint` matches and no irreversible policy change awaits human
+confirmation.
 
-Write `openspec/changes/<change-id>/seal-preview.md` as the **last grilling
-turn**. Accepting this packet **is** the stamp ceremony; then run
-`seal --confirmed` only to freeze the accepted packet. Writing the preview
-alone is not authorization.
+Use the preview when a human-readable policy review is useful, or before
+raising `hard_ceiling`, changing retention/paths/scope, destructive external
+writes, credentials, product `--commit`, or `git push`/PR/`main` operations.
+The preview records a decision; it does not itself authorize the later risky
+operation, check off tasks, or create retained/cache roots.
 
 ## Required sections
 
@@ -15,17 +19,21 @@ alone is not authorization.
 # 盖章预览 / Seal preview: <change-id>
 
 Entry mode: new-idea | major-revision | additive-extension | succession | execution-ready
-Stamp kind: first-seal | policy-restamp | semantic-restamp
+Audit diagnostic fields (optional):
+- previewed_at:
+- confirmed_at:
+- stamp_kind: first-policy-record | policy-restamp | semantic-diagnostic
+- reviewer:
 
-## 1. Contract coverage（一次性全盖）
+## 1. Contract fingerprint coverage（完整义务面）
 - change_id:
 - semantic fingerprint covers: **entire** active tasks.md obligations
   (checkbox / STATE neutralized) — not a single task
-- All active refs stamped this turn:
+- Active refs observed by this diagnostic:
   - R1 …
   - R2 …
   (list every [#R…] in the active registry)
-- ready now / still blocked by deps: (informational only; still stamped)
+- ready now / still blocked by deps: (informational only)
 - narrative digest covers: proposal.md, design.md, specs/**
 
 ## 2. Path profile (mode → expanded for this change-id)
@@ -44,7 +52,10 @@ Selected profile: A_local_thin | B_external_heavy | C_product_repo | D_custom
 ## 3. Trees
 
 ### 授权流
-grill → seal-preview（本页）→ 用户同意盖章 → loop.json → Loop 排空
+tasks/feature registry → matching fingerprint → check/plan → Apply
+
+Optional irreversible-policy branch:
+policy delta → seal-preview（本页）→ 用户确认该 policy delta → loop.json
 
 ### 落盘流
 change-id → ledger / scratch / product|pointers（本 change 展开）
@@ -53,19 +64,23 @@ change-id → ledger / scratch / product|pointers（本 change 展开）
 - retention:
 - test profiles:
 - budgets:
+- remaining-work budget advisory (only if the CLI payload has one):
+  - configured / recommended / shortfall
 - autonomy:
 - hard_ceiling:
 
 ## 5. Authority boundary
-- Safe after stamp: gate, record, narrative reseal, promote, sync
-- Risky always human: product --commit, credentials, git push / PR / main
+- Ordinary fingerprint-matched work: check, plan, Apply, Verify, promote, sync
+- Human-confirmed policy: raise hard_ceiling; change retention, paths, or scope
+- Risky operation still requires its own authority: product --commit,
+  credentials, destructive external writes, git push / PR / main
 
-## 6. 盖章确认
-- [ ] 同意推荐档位与政策，盖章开工（一次性全盖上列全部 refs）
+## 6. 可选政策确认 / audit acknowledgement
+- [ ] 记录当前档位与政策（不是普通 Apply/dispatch 的开工门）
 - [ ] 改档位为: A | B | C | D
 - [ ] 采用新建根名: <path or null>
 - [ ] 调整 budgets / autonomy / hard_ceiling: <delta>
-- [ ] 本轮不盖章
+- [ ] 仅保留诊断，不变更任何 policy
 ```
 
 ## Path profiles (modes; expand with `<change-id>`)
@@ -86,8 +101,12 @@ any existing `loop.json`. Prefer paths already named in the contract.
 - Contract-named roots win; profile is only a label.
 - Unnamed external heavy: propose a new root in the preview; never auto-fill
   another project's absolute path.
-- Fingerprint match: reuse stamp; do not re-ask paths.
+- Fingerprint and policy match: reuse recorded paths; do not re-ask.
 - Forbidden: repo-root `tmp_pytest_*`, `.pytest_tmp`, unnamed `_tmp/`.
+
+Naming a path profile creates no directory and no retained bundle. Bundle stays
+`null` unless `retention=full`, a task `TEST:` block, or explicit legacy audit
+mode requires one.
 
 ### Anti-pattern (do not copy)
 
@@ -96,16 +115,23 @@ change.
 
 ## When design / contract changes later
 
-| Situation | Stamp behavior |
+| Situation | Fingerprint / optional diagnostic behavior |
 |---|---|
 | Narrative-only design/proposal/specs edit | `reseal` digest refresh; **no** new path QA if policy unchanged |
-| `major-revision` / material-delta (ACCEPT/TEST/deps/SUPERSEDES) | Delta grill → rewrite preview listing **all** active refs again → semantic restamp |
-| `additive-extension` (append tasks) | Grill only new ACCEPT/TEST/paths → preview lists **old+new** refs (full registry) → semantic restamp |
-| `succession` | Lock behavior, MODIFIED specs → full-registry preview → semantic restamp |
-| Task `promote` `[x]` | Never a stamp; fingerprint ignores checkboxes |
+| `major-revision` / material-delta (ACCEPT/TEST/deps/SUPERSEDES) | Rebuild the active fingerprint; `supervised` pauses for the semantic decision, `full_auto` may restamp with a reason |
+| `additive-extension` (append tasks) | Grill new ACCEPT/TEST/paths, then rebuild the fingerprint over **old+new** refs |
+| `succession` | Lock behavior and MODIFIED specs, then rebuild the full-registry fingerprint |
+| Task `promote` `[x]` | Never a policy stamp; fingerprint ignores checkboxes |
+
+When this optional diagnostic is used, put `configured / recommended /
+shortfall` in it only when remaining work exceeds the recorded change cap.
+Never silently raise an inherited value, turn the advisory into a start-work
+gate, or make it a later `check` warning.
 
 ## QA rule
 
-One frontier question for the whole packet. Accepting defaults **is** agreeing
-to stamp. Then run `seal --confirmed` as the mechanical freeze. Do not re-ask
-the same boundary as a separate "please seal now" ritual.
+When a preview is needed, ask one frontier question for the whole policy delta.
+Acceptance applies only to the listed diagnostic/policy fields; it is not a
+general implementation ceremony and does not authorize destructive or external
+operations. Run `seal --confirmed` only when the accepted change belongs to the
+human-confirmed irreversible-policy set above.

@@ -78,7 +78,11 @@ conflict and make the next probe target that conflict.
 When called by `$openspec-loop-engineering`:
 
 - default sink is `return_only`
-- at most one unblock run per task attempt chain
+- at most two unblock runs per ref in one active fingerprint revision
+- the first is a repair decision; a second requires a completed second Apply
+  and a different failure fingerprint or new discriminating evidence
+- with the default two-Apply allowance, the second is a terminal adjudication:
+  `amend_spec|supersede_task|stop_budget`, never another retry
 - at most 4 tool calls, 4 evidence items, and 180 seconds
 - stop after one primary path and one fallback
 - do not implement the fix or widen into general literature review
@@ -94,11 +98,19 @@ blocker, supersedes a task, or the user explicitly asks for audit evidence.
 - `amend_spec`: acceptance, scope, output authority, or test meaning must change
 - `supersede_task`: the current task/approach is terminal but a replacement
   task can preserve the goal
-- `stop_budget`: remaining uncertainty cannot be reduced within the confirmed
-  budget or authority
+- `stop_budget`: remaining uncertainty cannot be reduced within the recorded
+  ref-local budget or authority
+
+An explicitly authorized ref-local `max_apply_attempts>=3` may permit the second
+unblock to return `retry` or `targeted_probe` for a third Apply. The disposition
+is advisory only: unblock never dispatches, swaps a worker, changes a packet,
+or replenishes an Apply/unblock allowance. A repeated or missing result
+fingerprint without new evidence cannot enter the second unblock.
 
 `amend_spec` and `supersede_task` pause Loop and return to
-`$openspec-change-interviewer`. They never silently reseal or reset budgets.
+`$openspec-change-interviewer`. Under `full_auto`, only the sole supervisor may
+restamp the semantic change with `--allow-semantic-change --reason`. No preview,
+stamp, or new revision silently resets budgets.
 
 ## Sinks and attempt placement
 
@@ -113,8 +125,8 @@ report into `specs/` or a heavy product root.
 Keep four identities separate:
 
 1. tracked decision report under `unblock/`
-2. heavy product/run evidence under the confirmed product or bundle root
-3. disposable scratch under the confirmed scratch root
+2. heavy product/run evidence under the recorded approved product or bundle root
+3. disposable scratch under the recorded scratch root
 4. Loop ledger attempts, containing counters and fingerprints only
 
 If a sink fails, report the sink error and still return the canonical JSON and

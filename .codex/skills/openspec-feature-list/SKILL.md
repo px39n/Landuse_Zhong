@@ -57,5 +57,9 @@ Run an advisory plan to inspect selection without claiming execution authority:
 python scripts/openspec_loop.py --repo-root . plan <change-id> --advisory
 ```
 
-Normal Loop execution still requires a matching sealed `loop.json`; generating
-the registry does not authorize implementation.
+Generating the registry alone does not authorize implementation. Ordinary Loop
+execution requires `check`/`plan` to see a matching `contract_fingerprint` and
+no `pending_irreversible_policy`; if `loop.json` is missing they may initialize
+recorded thin defaults without creating paths. Preview, stamp, legacy
+`sealed`/`confirmed_at`, headcount, and `hard_ceiling` fields are not ordinary
+dispatch authority.

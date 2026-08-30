@@ -5,7 +5,7 @@
 `openspec/changes/<change-id>/` is the only deterministic free write root for
 OpenSpec contract artifacts (`proposal.md`, `design.md`, `specs/**`,
 `tasks.md`, `interview.md`, `context.md`, `feature_list.json`, `loop.json`,
-`seal-preview.md`, `unblock/`, `handoffs/`).
+`seal-preview.md`, `unblock/`, `handoff.json`).
 
 ## Ask-once placement
 
@@ -21,11 +21,17 @@ before the first write:
 
 Do not silently pick a path. Silence is not approval.
 
-## Sealed Loop roots
+## Recorded Loop roots
 
-Reuse `loop.json` paths once sealed. Paths are chosen by **path profile** and
-expanded for **this** `<change-id>` (see `seal-preview-format.md`). Do not copy
-another change's absolute external tree as the default.
+Reuse paths already recorded in the change contract or `loop.json`. For an
+ordinary fingerprint-ready change, `check`/`plan` may initialize `loop.json`
+from its recorded `thin` retention decision without a preview, stamp, or user
+ceremony. Initialization records policy only: it does not create the ledger,
+scratch, cache, product, bundle, or GUI/Colab roots.
+
+Paths are chosen by **path profile** and expanded for **this** `<change-id>`
+(see `seal-preview-format.md`). Do not copy another change's absolute external
+tree as the default.
 
 | Profile | When | Typical expansion |
 |---|---|---|
@@ -40,13 +46,16 @@ Recommended ordinary layout when profile A applies:
 |---|---|
 | Ledger | `auto_test_openspec/<change-id>/loop/ledger.json` or under scratch |
 | Scratch | `test_cache/<change-id>/` |
-| Pytest basetemp | `test_cache/<change-id>/pytest/` (owned by seal, not per-task invention) |
+| Pytest basetemp | `test_cache/<change-id>/pytest/` (recorded once, not a per-task invention) |
 | Product | explicit product root or `null` |
 | Bundle | `null` unless `retention=full` |
 | GUI/Colab | `outputs/colab_verify/` only when required |
 
-Also write `openspec/changes/<change-id>/seal-preview.md` before first seal;
-preview is not authorization.
+`openspec/changes/<change-id>/seal-preview.md` is optional. Write it only when
+the user requests an audit diagnostic or an irreversible policy choice needs
+human confirmation, such as raising `hard_ceiling` or changing retention,
+paths, or scope. The preview narrows that policy review; it is neither ordinary
+start-work authority nor a prerequisite for the first Apply.
 
 Forbidden ad-hoc roots: repository-root `_tmp/`, `tmp/`, `tmp_*`,
 `tmp_pytest_*`, `.pytest_tmp`, and unnamed scratch folders.
@@ -57,7 +66,7 @@ Never conflate paths that share an `attemptNNN` label:
 
 1. Tracked decision report: `openspec/changes/<id>/unblock/*`
 2. Heavy product or audit evidence under the confirmed product/bundle root
-3. Disposable scratch: `{pytest,cache,tmp}/<ref>/<run-id>/` under sealed scratch
+3. Disposable scratch: `{pytest,cache,tmp}/<ref>/<run-id>/` under recorded scratch
 4. Ledger `attempts[]`: counters and fingerprints only
 
 ## Hygiene gate

@@ -26,6 +26,8 @@ SKILL_NAMES = (
     "openspec-omx-bridge",
     "openspec-feature-list",
     "openspec-hygiene",
+    "silent-failure-hunting",
+    "review-pipeline",
     "monitor-openspec-codex",
 )
 MIRROR_ROOTS = (Path(".codex/skills"), Path(".claude/skills"))

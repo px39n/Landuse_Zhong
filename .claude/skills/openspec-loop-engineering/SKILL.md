@@ -1,13 +1,14 @@
 ---
 name: openspec-loop-engineering
-description: Run a sealed, finite-budget OpenSpec implementation loop for one existing change. Use after scope, retention, task dependencies, and acceptance have been confirmed; pause on contract drift, semantic output deviation, or exhausted budgets. Do not use for open-ended design or full retained-audit monitoring.
+description: Run the finite-budget OpenSpec implementation supervisor for one existing change. Use when the active registry has a matching fingerprint and no irreversible policy decision is pending; route a write-disjoint Apply wave, join it, and keep Verify, promotion, budgets, and final authority supervisor-owned.
 ---
 
 # OpenSpec Loop Engineering
 
-This is the lightweight execution supervisor for an existing OpenSpec change.
-It coordinates one task at a time; it does not author an uncertain contract and
-does not replace legacy retained-audit monitoring.
+This is the sole lightweight execution supervisor for an existing OpenSpec
+change. It coordinates the complete ready census and one write-disjoint Apply
+wave at a time; it does not author an uncertain contract, create a second
+lifecycle, or replace legacy retained-audit monitoring.
 
 ## Entry gate
 
@@ -18,22 +19,43 @@ python scripts/openspec_loop.py check <change-id>
 python scripts/openspec_loop.py plan <change-id>
 ```
 
-Proceed only when `check.ok=true`, `plan.sealed=true`, and `selected_ref` is
-non-null. Otherwise:
+When `loop.json` is missing, `check`/`plan` initialize recorded `thin` defaults,
+the current `contract_fingerprint`, and ref-local Apply/unblock allowances. That
+initialization creates no ledger, scratch, cache, product, or retained root and
+does not authorize an irreversible operation.
 
-- missing or unsealed `loop.json` -> `$openspec-change-interviewer <change-id>`
-- semantic fingerprint drift, meaning an obligation in the active task registry
-  changed -> pause and resolve it through the authority rules below
+Read these plan fields separately:
+
+- `selected_batch`: the complete dependency-ready census
+- `selected_wave`: the complete scan-qualified, write-disjoint ready wave
+- `apply_remaining`: the current actual-dispatch allowance
+- `allowed_parallel_applies = min(|selected_wave|, apply_remaining)`
+- `dispatch_refs`: the deterministic prefix actually eligible for Apply now
+
+Dispatch only when `check.ok=true`, `fingerprint_ready=true`, no
+`pending_irreversible_policy` item remains, and `dispatch_refs` is non-empty.
+Otherwise:
+
+- semantic fingerprint drift -> keep `selected_batch` visible, empty the wave,
+  and resolve the changed active-registry obligation through the authority rules
+- pending irreversible policy -> keep the census visible but do not dispatch
 - narrative drift, meaning `proposal.md`, `design.md`, or `specs/**` changed ->
   refresh with `python scripts/openspec_loop.py reseal <change-id>` and continue;
   under `narrative_policy: strict` treat it as a semantic pause instead
 - task/feature drift, unknown dependencies, or cycles -> repair the contract
-  and regenerate with `$openspec-feature-list <change-id>`
+  and regenerate with `$openspec-feature-list <change-id>`; only affected refs
+  are excluded from readiness
+- `apply_remaining=0` -> leave `selected_wave` visible and pause only actual
+  Apply dispatch; do not call this a seal or change-wide terminal
 - no ready task -> summarize terminal and blocked states; do not invent work
 
-Promotion is not drift. The sealed `contract_fingerprint` covers the active task
+Promotion is not drift. The `contract_fingerprint` covers the active task
 registry with checkbox marks neutralized and `STATE:` directives removed, so
-flipping a checkbox after `PASS` leaves the seal valid and needs no reseal.
+flipping a checkbox after `PASS` leaves the fingerprint valid and needs no
+semantic restamp.
+
+Legacy `sealed`, `confirmed_at`, `max_subagents`, and `hard_ceiling` fields are
+compatibility or policy diagnostics. They are not ordinary dispatch authority.
 
 `plan --advisory` may expose a candidate during design, but it never authorizes
 execution.
@@ -43,69 +65,102 @@ execution.
 - Human contract: current proposal, design, specs, and active `tasks.md`.
 - Compact task state: `feature_list.json`; it must not duplicate full ACCEPT or
   TEST prose.
-- Sealed execution policy: `loop.json`.
+- Recorded execution policy and fingerprint: `loop.json`.
+- Optional coordination metadata: exactly one change-local `handoff.json`.
 - Disposable attempt counters: the ledger path recorded in `loop.json`.
 - Prior contract wording: Git history, not an ever-growing appendix.
 
 The ledger is never a second spec. It stores fingerprints, counters, durations,
 and dispositions, not logs or product evidence.
 
-## Execution latch
+## Routing and execution latch
 
-After gate returns continue, the next substantive action in the same turn must be Apply.
-Do not end the turn with a summary, suggestion, or handoff while the latch is active.
-A one-line progress update naming the ref and action is allowed only when the Apply tool or skill call follows in the same turn.
+Before routing every non-trivial intent or evidence-created work split, run the
+proactive scan in `references/proactive-delegation-scan.md`. Record the narrowest
+`matched_role_id|null`, one `direct|dispatch|blocked` decision, its named reason,
+and one `effective_role_id`. A permitted direct package uses non-deployable
+`rose` and remains supervisor-owned; the scan itself consumes zero Apply and
+zero scheduling headcount.
 
-The default executor is the main agent for both Apply and Verify.
-Do not reserve or consume a subagent slot by default.
-An Apply worker is optional for a heavy or high-risk task when sealed max_subagents remains.
-A worker must not verify, promote, toggle a checkbox, or claim PASS.
-If no worker is used, the main agent performs Apply directly; worker availability never weakens the latch.
+A ref enters `selected_wave` only when its package is bounded and non-trivial,
+uses the narrowest applicable Role ID, has a write scope disjoint from packages
+already admitted to the wave, and names a stable supervisor-owned join id.
+Write overlap moves a ref to a later wave or direct serial work. It is not a
+headcount blocker.
 
-One invocation uses one run_id; retries append attempts and must not open an empty run per ref.
-The latch preserves thin retention and must not create `BUNDLE`, `EVIDENCE`, `progress.txt`, `runs.log`, or per-attempt folders.
+`selected_wave` is never truncated by `host_soft_cap`, `max_subagents`, distinct
+worker ids, Role ids, runtime ids, or read-only worker counts. Those values are
+diagnostic only. Apply dispatch is limited only through `dispatch_refs`, the
+existing iteration/minutes/breaker gates, and write topology.
+
+The local writer allowlist in `references/role-adapter-matrix.md` is strict:
+
+- only `implementer` writes task-owned implementation or contract files
+- only `test-engineer` writes task-owned test files
+- only `browser-qa-runner` and `e2e-artifact-runner` write to an already
+  approved evidence root
+- every other dispatched role is read-only
+
+After gate returns continue for any `dispatch_refs`, the next substantive
+action in the same turn must be Apply. Do not end with a summary, suggestion,
+or handoff while that latch is active. A worker may Apply only its packet; it
+must not Verify, promote, toggle a checkbox, write the ledger, or claim PASS.
+
+One invocation uses one `run_id`; retries append attempts and must not open an
+empty run per ref. The latch preserves thin retention and must not create
+`BUNDLE`, `EVIDENCE`, `progress.txt`, `runs.log`, or per-attempt folders.
 
 ## Core loop
 
-Drain the ready queue rather than stopping after one task. `plan --batch`
-reports every ready ref, and because `ready` requires each dependency to be
-complete, that set is mutually independent by construction. Continue while
-`gate` allows, the verifier keeps returning `PASS`, and the batch is non-empty.
-Stop on the first non-`PASS`, a breaker, or the ceiling.
+Drain the ready queue rather than stopping after one task:
 
-For each selected ref:
-
-1. Run `gate` before Explore, Apply, Verify, or Unblock.
-2. Use `$openspec-explore <change-id>` only for one concrete unknown; record the
-   result immediately.
-3. Invoke `$openspec-apply-change <change-id> --task <ref> --orchestrated`.
-   While the latch is active, invoke it immediately instead of first emitting
-   turn-ending speech. The maker changes only that task's implementation and
-   cannot promote state.
-4. Record the apply result and actual active duration.
-5. Invoke `$openspec-verify-change <change-id> --task <ref>` and record exactly
-   one of `PASS|FAIL|BLOCKED|DEVIATED`.
-6. After `PASS`, promote with
+1. Run `plan`; preserve the full `selected_batch`, form `selected_wave`, and
+   Apply only `dispatch_refs`.
+2. For each dispatched worker, create one fresh
+   `references/subagent-task-packet.md` envelope. One Apply packet binds exactly
+   one ref and one supervisor-owned Apply attempt.
+3. Invoke `$openspec-apply-change <change-id> --task <ref> --orchestrated` for
+   each dispatched Apply. A supervisor-direct `rose` package follows the same
+   ref/attempt/write-scope boundary without creating a worker identity.
+4. Accept one terminal `references/subagent-result.md` and have the supervisor
+   write exactly one authoritative Apply record for that packet/ref/attempt;
+   reject duplicates. The worker never writes the authoritative record.
+5. Persist and complete the join for every actually dispatched member of the
+   shared-worktree wave before starting any member's Verify. A missing, failed,
+   partial, blocked, or unverified result blocks Verify only for its own ref
+   after the barrier; it does not convert a completed sibling into failure.
+6. Supervisor Verify consumes zero Apply and zero scheduling headcount. Invoke
+   `$openspec-verify-change <change-id> --task <ref>` only for a ref whose own
+   result is completed with inspectable evidence, and record exactly one of
+   `PASS|FAIL|BLOCKED|DEVIATED`.
+7. After `PASS`, promote with
    `python scripts/openspec_loop.py promote <change-id> --ref <ref>`. It flips
    the checkbox, regenerates the index, refuses any edit that would change the
-   sealed fingerprint, and re-runs the plan in one transition. Never hand-edit
+   fingerprint, and re-runs the plan in one transition. Never hand-edit
    the checkbox; repair index drift alone with `sync <change-id>`.
-7. On `FAIL`, allow a bounded implementation retry when the gate permits it.
-8. On `BLOCKED` or `DEVIATED`, invoke `$openspec-unblock-research <change-id>`
-   once in loop-light mode. Respect its disposition:
-   - `retry` or `targeted_probe` -> gate before one more attempt
-   - `amend_spec` or `supersede_task` -> amend the contract under the authority
-     rules below, regenerate the index, and seal a new revision
-   - `stop_budget` -> mark the task `maxed` and stop
-9. When no ready task remains, close at the design level before claiming
+8. Keep retry ownership distinct:
+   - a worker may retry only a transient tool/process failure before its
+     terminal result, inside the same unchanged packet and Apply attempt
+   - an assertion or semantic failure returns terminally; only the supervisor
+     may gate and issue a fresh packet for a new Apply attempt
+   - unblock may return a disposition but never dispatch, swap a worker, or
+     replenish an exhausted allowance
+9. On `BLOCKED` or `DEVIATED`, invoke `$openspec-unblock-research <change-id>`
+   when the ref-local gate permits it. Exhaustion marks only that ref
+   `maxed|stop_budget`; unrelated ready refs and later waves remain eligible.
+10. Re-plan after each joined wave and continue independent work. When no ready
+   task remains, close at the design level before claiming
    completion: run `goals <change-id>` for the coverage matrix, then
    `design-verify <change-id> --observation <path>` for `PASS` or `GAP`. An
    absent observation is `unobserved`, not `PASS`. A `GAP` returns a revision
    proposal; apply it under the authority rules and resume the drain loop. Only
    on `PASS` run whole-change verification and strict OpenSpec validation once.
 
-Every action must be followed by `record` before another action of the same
-loop. One invocation keeps the same run id across selected refs and retries; an
+Each dispatched packet/ref/Apply attempt receives exactly one supervisor Apply
+record before a later Apply attempt for that ref; duplicates are rejected.
+Zero-Apply actions retain
+their own diagnostic records when useful but never manufacture Apply usage. One
+invocation keeps the same run id across selected refs and retries; an
 intentional resume reuses it, while a genuinely new invocation may create one
 new id. Revision/change budgets still span those run ids.
 
@@ -123,39 +178,50 @@ Allowed states:
 - A command that exits zero can still be `DEVIATED` when outputs use the wrong
   source, target, period, metric, resolution, or acceptance interpretation.
 
-## Finite budgets
+## Finite and ref-local budgets
 
-Read budgets from `loop.json`; do not silently reset them after a new spec
-revision. Recommended defaults are:
+Read recorded budgets from `loop.json`; do not silently reset them after a new
+run, session, or spec revision. Missing-loop initialization gives every active
+ref `max_apply_attempts=2` and dormant `max_unblock_runs=2`. Unblock allowance
+activates only after that ref becomes `blocked|deviated`; exhausting it marks
+only that ref `maxed|stop_budget`. A stamp cannot replenish it.
 
-- task: 2 apply attempts and 1 unblock run
-- revision: 8 apply iterations, 1 explore run, 2 distinct subagents, 120 active
-  minutes
-- change: 3 revisions, 20 apply iterations or twice the active task count, and
-  360 active minutes or ten minutes per task, whichever is larger; a first seal
-  derives the change budget from the registry it actually covers
+Revision/change Apply limits contribute only to `apply_remaining`, which limits
+actual `dispatch_refs` without truncating `selected_wave`. Goal evaluation,
+stop hooks, read-only research/review, supervisor Verify, and `rose` direct
+routing consume zero Apply and zero scheduling headcount.
 
 Time means recorded active tool/runtime duration, not time spent waiting for a
 user. Two identical result fingerprints, two consecutive `no_progress`
 outcomes, or two repeated semantic deviations trigger a breaker.
 
+`summary` uses `openspec-loop-summary.v3`. `revision_attempt_count` and
+`change_attempt_count` include Apply, Verify, Explore, and Unblock records; they
+must never be compared with an iteration limit. Read
+`revision_apply_iterations_used|remaining` and
+`change_apply_iterations_used|remaining` for budget status. A zero Apply
+remainder does not block a pending Verify; the kind-specific `gate.decision`
+remains authoritative.
+
+Legacy `host_soft_cap`, `max_subagents`, distinct-id counts, and `hard_ceiling`
+remain observable compatibility diagnostics. They do not filter a wave, reduce
+`allowed_parallel_applies`, consume `apply_remaining`, or create an ordinary
+dispatch terminal.
+
 ## Authority
 
-`loop.json` seals two authority fields. Read them once and do not re-litigate
-them per attempt.
+`loop.json` records the current fingerprint, policy, and autonomy. A matching
+fingerprint with no pending irreversible policy is ordinary dispatch authority;
+`seal-preview.md`, `confirmed_at`, and `seal --confirmed` are not start-work
+gates.
 
-`hard_ceiling` is the only stop that no Loop may raise. It bounds absolute apply
-iterations, absolute active minutes, and the number of self-extensions. `seal`
-sets it and requires `--confirmed`; `reseal` inherits it verbatim, refuses a
-`--set-max-*` value above it, and refuses any further extension once
-`max_self_extensions` is spent. A `gate` stop naming `hard_ceiling_*` is
-reported as `terminal: true`: stop and report, do not seek more budget.
-
-`autonomy` decides who may move the boundary below that ceiling.
+Legacy `hard_ceiling` remains policy compatibility data and is diagnostic for
+ordinary dispatch. Raising it, like changing retention, paths, or scope,
+requires explicit human confirmation; no Loop raises it by itself.
 
 | action | `supervised` (default) | `full_auto` |
 |---|---|---|
-| extend a change budget | `reseal --set-max-* --confirmed --reason` after explicit user authorization | `reseal --set-max-* --reason`, recorded in `budget_extensions` |
+| raise an activated ref-local unblock ceiling or another recorded budget | explicit user authorization and a reason | supervisor may amend below unchanged irreversible policy with a recorded reason |
 | amend tasks after a design-level gap | pause and hand off to `$openspec-change-interviewer` | amend the registry, regenerate the index, then `reseal --allow-semantic-change --reason` |
 | raise `hard_ceiling`, change retention, paths, or scope | human-confirmed `seal` | human-confirmed `seal` |
 
@@ -163,6 +229,25 @@ Autonomy never widens repository authority. Regardless of mode, destructive
 external writes, credentials, product `--commit` runs, and `git push`, pull
 request, or `main` operations stay human-authorized under `AGENTS.md`. A
 `full_auto` Loop that needs one of those stops as `BLOCKED`.
+
+## Bounded subordinate hosts
+
+The supervisor may call only these two subordinate hosts:
+
+- `silent-failure-hunting` through Role ID `silent-failure-reviewer`, for one
+  bounded false-success question
+- `review-pipeline`, only for user-requested review or one named specialist risk
+  unresolved by direct inspection plus the smallest relevant check; it may use
+  at most one auxiliary canonical Role ID
+
+Both are read-only, non-lifecycle, and zero Apply/headcount. Their results are
+advisory and do not replace task `TEST:`, final Verify, verdict, promotion, or
+PASS. Neither may auto-retry, redispatch, swap roles, or start another review
+swarm.
+
+`handoff.json` is the only change-local coordination surface. Do not create a
+delivery-flow operating system, A33/Board ownership, per-worker progress
+journals, another slash command, a second ledger, or another supervisor.
 
 ## Retention and attempt placement
 
@@ -179,9 +264,9 @@ bundle paths on every invocation.
 Classify similarly named attempt paths before reuse or deletion:
 
 1. Tracked decision report: `openspec/changes/<change-id>/unblock/*.json|md`.
-2. Heavy product/run evidence under the explicitly confirmed product or bundle
+2. Heavy product/run evidence under the recorded approved product or bundle
    root.
-3. Disposable `{pytest,cache,tmp}/<ref>/<run-id>/` under the confirmed scratch
+3. Disposable `{pytest,cache,tmp}/<ref>/<run-id>/` under the recorded scratch
    root.
 4. Ledger `attempts[]`, which is counters and fingerprints only.
 
@@ -216,22 +301,27 @@ python scripts/openspec_loop.py apply-revision <change-id> --proposal <path> --r
 python scripts/openspec_loop.py summary <change-id> --run-id <id>
 ```
 
-`promote` requires a recorded verifier pass for that ref in the current episode,
+`promote` requires a recorded supervisor verifier pass for that ref in the
+current episode,
 so the verifier stays authoritative. `apply-revision` refuses under
 `autonomy: supervised` and refuses whenever `gate` already reports stop.
 
-The sealed ledger path and fingerprint are loaded from `loop.json`; overrides
-must match the sealed values.
+The recorded ledger path and fingerprint are loaded from `loop.json`; overrides
+must match those values.
 
 ## Output
 
-During a continuing loop, emit at most one progress line naming the selected
-ref and action, then continue with the required tool or skill call. End the turn
-only on a stop, a non-`PASS` verdict, an authority gate, or a ceiling.
+During a continuing loop, emit at most one progress line naming the current
+wave/action, then continue with the required tool or skill call. A local
+non-`PASS` blocks only its ref; after the join and disposition, continue other
+eligible refs unless a fingerprint, irreversible-policy, iteration/minutes, or
+breaker gate pauses actual dispatch.
 Consume Apply's NEXT: verify in the same turn; it is not a user handoff.
 
-When the loop stops, report the selected ref, action, verifier verdict, budget
-state, remaining distance to `hard_ceiling`, and whether any tracked evidence
-was written. Name the autonomy mode whenever a budget was extended or a
-contract amended without a human turn. Never claim promotion unless the
-checkbox, compact feature state, and post-promotion `check` agree.
+When the loop stops, report the full ready census, selected wave, actual
+dispatch refs, per-ref action/verifier verdict, applicable budget state, and
+whether any tracked evidence was written. Report legacy `hard_ceiling` or
+headcount fields only as compatibility diagnostics. Name the autonomy mode
+whenever a budget was extended or a contract amended without a human turn.
+Never claim promotion unless the checkbox, compact feature state, and
+post-promotion `check` agree.

@@ -31,7 +31,7 @@ SCHEMA_PLAN = "openspec-loop-plan.v2"
 SCHEMA_CHECK = "openspec-loop-check.v2"
 SCHEMA_LEDGER = "openspec-loop-ledger.v2"
 SCHEMA_GATE = "openspec-loop-gate.v2"
-SCHEMA_SUMMARY = "openspec-loop-summary.v2"
+SCHEMA_SUMMARY = "openspec-loop-summary.v3"
 SCHEMA_PROMOTE = "openspec-loop-promote.v1"
 SCHEMA_SYNC = "openspec-loop-sync.v1"
 SCHEMA_GOALS = "openspec-loop-goals.v1"
@@ -39,6 +39,28 @@ SCHEMA_DESIGN_VERIFY = "openspec-loop-design-verify.v1"
 SCHEMA_REVISION_PROPOSAL = "openspec-loop-revision-proposal.v1"
 SCHEMA_APPLY_REVISION = "openspec-loop-apply-revision.v1"
 OBSERVATION_STATES = ("match", "mismatch")
+TERMINAL_APPLY_RESULTS = {
+    "blocked",
+    "completed",
+    "deviated",
+    "empty",
+    "failed",
+    "failure",
+    "no_progress",
+    "partial",
+    "success",
+    "unverified",
+}
+COMPLETED_APPLY_RESULTS = {"completed", "success"}
+CANONICAL_APPLY_STATUSES = {
+    "completed",
+    "failed",
+    "empty",
+    "partial",
+    "blocked",
+    "unverified",
+}
+ZERO_APPLY_KINDS = {"explore", "verify", "goal", "stop_hook", "review"}
 
 TASK_STATES = {
     "pending",
@@ -53,7 +75,7 @@ TASK_STATES = {
 TERMINAL_STATES = {"maxed", "superseded", "passed"}
 PAUSED_STATES = {"blocked", "deviated", "in_progress"}
 DEFAULT_BUDGETS = {
-    "task": {"max_apply_attempts": 2, "max_unblock_runs": 1},
+    "task": {"max_apply_attempts": 2, "max_unblock_runs": 2},
     "revision": {
         "max_iterations": 8,
         "max_explore_runs": 1,
@@ -65,6 +87,12 @@ DEFAULT_BUDGETS = {
         "max_iterations": 20,
         "max_active_minutes": 360,
     },
+}
+DEFAULT_TEST_PROFILES = {
+    "attempt": "targeted owner tests; no retained bundle",
+    "promotion": "complete task TEST exactly once before PASS",
+    "final": "whole-change verification plus strict OpenSpec validation",
+    "audit": "legacy monitor only when retention=full or explicitly required",
 }
 
 NON_OPERATIVE_HEADING_KEYWORDS = (
@@ -89,7 +117,7 @@ GOAL_DIRECTIVE_RE = re.compile(
     re.IGNORECASE,
 )
 DIRECTIVE_RE = re.compile(
-    r"^\s*-\s*(?P<key>DEPENDS_ON|INDEPENDENT|NO_DEP|STATE|SUPERSEDES)\s*:\s*(?P<value>.+?)\s*$",
+    r"^\s*-\s*(?P<key>DEPENDS_ON|INDEPENDENT|NO_DEP|STATE|SUPERSEDES|FILES|WRITE_SCOPE|ROLE_ID|EXECUTION|JOIN|WORKTREE)\s*:\s*(?P<value>.+?)\s*$",
     re.IGNORECASE,
 )
 LEGACY_STATE_RE = re.compile(
@@ -171,6 +199,12 @@ class TaskEntry:
     no_dep_raw: str | None = None
     state_raw: str | None = None
     supersedes_raw: str | None = None
+    files_raw: str | None = None
+    write_scope_raw: str | None = None
+    role_id_raw: str | None = None
+    execution_raw: str | None = None
+    join_raw: str | None = None
+    worktree_raw: str | None = None
     dependencies: list[str] = field(default_factory=list)
     dependency_closure: list[str] = field(default_factory=list)
     supersedes: list[str] = field(default_factory=list)
@@ -185,6 +219,22 @@ class TaskEntry:
     completed: bool = False
     ready: bool = False
     blocked_reasons: list[str] = field(default_factory=list)
+    max_apply_attempts: int | None = None
+    apply_attempts_used: int = 0
+    max_unblock_runs: int | None = None
+    unblock_runs_used: int = 0
+    unblock_active: bool = False
+    budget_disposition: str | None = None
+    target_files: list[str] = field(default_factory=list)
+    write_scope: list[str] = field(default_factory=list)
+    routing: dict[str, Any] | None = None
+    execution_mode: str = "async"
+    join_id: str | None = None
+    worktree_mode: str = "shared"
+    write_policy: str = "read_only"
+    allowed_write_roots: list[str] = field(default_factory=list)
+    wave_eligible: bool = False
+    wave_blockers: list[str] = field(default_factory=list)
 
     def to_plan_item(self) -> dict[str, Any]:
         return {
@@ -206,6 +256,22 @@ class TaskEntry:
             "ready": self.ready,
             "issues": self.issues,
             "blocked_reasons": self.blocked_reasons,
+            "max_apply_attempts": self.max_apply_attempts,
+            "apply_attempts_used": self.apply_attempts_used,
+            "max_unblock_runs": self.max_unblock_runs,
+            "unblock_runs_used": self.unblock_runs_used,
+            "unblock_active": self.unblock_active,
+            "budget_disposition": self.budget_disposition,
+            "target_files": self.target_files,
+            "write_scope": self.write_scope,
+            "routing": self.routing,
+            "execution_mode": self.execution_mode,
+            "join_id": self.join_id,
+            "worktree_mode": self.worktree_mode,
+            "write_policy": self.write_policy,
+            "allowed_write_roots": self.allowed_write_roots,
+            "wave_eligible": self.wave_eligible,
+            "wave_blockers": self.wave_blockers,
         }
 
 
@@ -284,6 +350,18 @@ def parse_task_file(tasks_text: str) -> list[TaskEntry]:
             current_task.state_raw = value.lower().replace("-", "_")
         elif key == "SUPERSEDES":
             current_task.supersedes_raw = value
+        elif key == "FILES":
+            current_task.files_raw = value
+        elif key == "WRITE_SCOPE":
+            current_task.write_scope_raw = value
+        elif key == "ROLE_ID":
+            current_task.role_id_raw = value.strip("`")
+        elif key == "EXECUTION":
+            current_task.execution_raw = value
+        elif key == "JOIN":
+            current_task.join_raw = value
+        elif key == "WORKTREE":
+            current_task.worktree_raw = value
 
     return tasks
 
@@ -854,14 +932,15 @@ def autonomy_of(config: dict[str, Any] | None) -> str:
     return "supervised"
 
 
-def hard_ceiling_of(config: dict[str, Any] | None) -> dict[str, int]:
-    ceiling = DEFAULT_HARD_CEILING.copy()
+def hard_ceiling_of(config: dict[str, Any] | None) -> dict[str, int] | None:
     raw = config.get("hard_ceiling") if isinstance(config, dict) else None
-    if isinstance(raw, dict):
-        for key in ceiling:
-            value = raw.get(key)
-            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-                ceiling[key] = value
+    if not isinstance(raw, dict):
+        return None
+    ceiling = DEFAULT_HARD_CEILING.copy()
+    for key in ceiling:
+        value = raw.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            ceiling[key] = value
     return ceiling
 
 
@@ -976,11 +1055,10 @@ def loop_config_issues(config: dict[str, Any] | None, change_id: str) -> list[st
             or autonomy.strip().lower() not in AUTONOMY_MODES
         ):
             issues.append("loop.json autonomy must be supervised or full_auto")
-        issues.extend(hard_ceiling_issues(config))
+        if "hard_ceiling" in config:
+            issues.extend(hard_ceiling_issues(config))
     if config.get("change_id") != change_id:
         issues.append("loop.json change_id mismatch")
-    if config.get("sealed") is not True:
-        issues.append("contract is not sealed")
     if config.get("retention") not in {"none", "thin", "full"}:
         issues.append("loop.json retention must be none, thin, or full")
     paths = config.get("paths")
@@ -1043,10 +1121,6 @@ def loop_config_issues(config: dict[str, Any] | None, change_id: str) -> list[st
             issues.append(
                 "loop.json test_profiles missing: " + ", ".join(missing_profiles)
             )
-    if not isinstance(config.get("confirmed_at"), str) or not config[
-        "confirmed_at"
-    ].strip():
-        issues.append("loop.json confirmed_at is required")
     return issues
 
 
@@ -1059,7 +1133,10 @@ def scaled_change_defaults(task_count: int) -> dict[str, int]:
     defaults = DEFAULT_BUDGETS["change"]
     return {
         "max_revisions": defaults["max_revisions"],
-        "max_iterations": max(defaults["max_iterations"], 2 * task_count),
+        "max_iterations": max(
+            defaults["max_iterations"],
+            DEFAULT_BUDGETS["task"]["max_apply_attempts"] * task_count,
+        ),
         "max_active_minutes": max(defaults["max_active_minutes"], 10 * task_count),
     }
 
@@ -1077,6 +1154,117 @@ def merge_budget_defaults(raw: Any) -> dict[str, dict[str, int]]:
             if isinstance(value, int) and value > 0:
                 defaults[key] = value
     return merged
+
+
+RETENTION_PROFILE_LABELS = {
+    "Audit retention": "retention",
+    "Retained evidence root": "retained",
+    "Disposable cache root": "disposable",
+    "Pytest basetemp root": "pytest_basetemp",
+    "Scratch root": "scratch",
+    "Product/runtime output root": "product",
+    "GUI/Colab evidence root": "gui_colab",
+}
+
+
+def recorded_retention_profile(repo_root: Path, change_id: str) -> dict[str, Any]:
+    proposal_path = repo_root / "openspec" / "changes" / change_id / "proposal.md"
+    if not proposal_path.is_file():
+        raise ValueError("missing recorded Artifact Retention Decision in proposal.md")
+
+    values: dict[str, str | None] = {}
+    in_decision = False
+    for line in read_utf8(proposal_path).splitlines():
+        if line.strip().lower() == "## artifact retention decision":
+            in_decision = True
+            continue
+        if in_decision and line.startswith("## "):
+            break
+        if not in_decision or not line.startswith("- ") or ":" not in line:
+            continue
+        label, raw = line[2:].split(":", 1)
+        key = RETENTION_PROFILE_LABELS.get(label.strip())
+        if key is None:
+            continue
+        token = re.split(r"[;；]", raw, maxsplit=1)[0].strip().rstrip("。. ")
+        token = token.strip("`")
+        values[key] = None if token.lower() == "null" else token
+
+    missing = sorted(set(RETENTION_PROFILE_LABELS.values()) - set(values))
+    if missing:
+        raise ValueError(
+            "Artifact Retention Decision missing fields: " + ", ".join(missing)
+        )
+    if values["retention"] != "thin":
+        raise ValueError("automatic Loop initialization requires recorded thin retention")
+    disposable = values["disposable"]
+    if not disposable:
+        raise ValueError("automatic Loop initialization requires a disposable cache root")
+
+    ledger = (Path(disposable) / "loop" / "ledger.json").as_posix()
+    return {
+        **values,
+        "paths": {
+            "ledger": ledger,
+            "scratch": values["scratch"],
+            "product": values["product"],
+            "bundle": values["retained"],
+            "gui_colab": values["gui_colab"],
+        },
+    }
+
+
+def initialize_thin_loop_config(
+    repo_root: Path,
+    change_id: str,
+    tasks: list[TaskEntry],
+    *,
+    fingerprint: str,
+    narrative_digest: str,
+) -> dict[str, Any]:
+    retention_profile = recorded_retention_profile(repo_root, change_id)
+    budgets = merge_budget_defaults(None)
+    budgets["change"] = scaled_change_defaults(len(tasks))
+    config = {
+        "schema_version": SCHEMA_LOOP,
+        "change_id": change_id,
+        "contract_fingerprint": fingerprint,
+        "narrative_digest": narrative_digest,
+        "narrative_policy": "advisory",
+        "autonomy": "supervised",
+        "retention": retention_profile["retention"],
+        "paths": retention_profile["paths"],
+        "retention_profile": {
+            key: retention_profile[key]
+            for key in ("retained", "disposable", "pytest_basetemp", "scratch", "product", "gui_colab")
+        },
+        "budgets": budgets,
+        "per_ref_budgets": {
+            task.ref: DEFAULT_BUDGETS["task"].copy() for task in tasks
+        },
+        "test_profiles": DEFAULT_TEST_PROFILES.copy(),
+        "initialized_from": "thin-default",
+    }
+    write_json_atomic(loop_config_path(repo_root, change_id), config)
+    return config
+
+
+def initialize_loop_from_registry(repo_root: Path, change_id: str) -> dict[str, Any]:
+    tasks_path, feature_path = contract_paths(repo_root, change_id)
+    if not tasks_path.is_file() or not feature_path.is_file():
+        raise ValueError(f"missing contract artifacts for change `{change_id}`")
+    tasks = parse_task_file(read_utf8(tasks_path))
+    if not tasks:
+        raise ValueError(f"change `{change_id}` has no active task registry")
+    features = load_feature_map(read_utf8(feature_path))
+    build_dependency_graph(tasks, features)
+    return initialize_thin_loop_config(
+        repo_root,
+        change_id,
+        tasks,
+        fingerprint=compute_semantic_fingerprint(repo_root, change_id),
+        narrative_digest=compute_narrative_digest(repo_root, change_id),
+    )
 
 
 def configured_ledger_path(
@@ -1199,6 +1387,8 @@ def resolve_runtime_policy(
 ) -> tuple[Path, dict[str, Any], str, Path, dict[str, dict[str, int]], list[str]]:
     repo_root = args.repo_root.resolve()
     config = load_loop_config(repo_root, args.change_id)
+    if config is None:
+        config = initialize_loop_from_registry(repo_root, args.change_id)
     issues = loop_config_issues(config, args.change_id)
     if issues or config is None:
         raise ValueError("; ".join(issues))
@@ -1208,13 +1398,16 @@ def resolve_runtime_policy(
     supplied = getattr(args, "contract_fingerprint", None)
     if supplied and supplied != current_fingerprint:
         raise ValueError("supplied contract fingerprint does not match sealed contract")
+    irreversible_pending = pending_irreversible_policy(config)
+    if irreversible_pending:
+        raise ValueError(
+            "unconfirmed irreversible policy: " + ", ".join(irreversible_pending)
+        )
     warnings: list[str] = []
     if config.get("narrative_digest") != compute_narrative_digest(
         repo_root, args.change_id
     ):
         message = narrative_drift_message(args.change_id)
-        if narrative_policy_of(config) == "strict":
-            raise ValueError(message)
         warnings.append(message)
     ledger_path = configured_ledger_path(
         repo_root,
@@ -1234,6 +1427,373 @@ def normalize_subagent_ids(raw_ids: list[str] | None) -> list[str]:
         if candidate and candidate not in deduped:
             deduped.append(candidate)
     return deduped
+
+
+def ref_budget_of(
+    config: dict[str, Any],
+    budgets: dict[str, dict[str, int]],
+    ref: str | None,
+) -> dict[str, int]:
+    budget = budgets["task"].copy()
+    per_ref = config.get("per_ref_budgets")
+    raw = per_ref.get(ref) if ref and isinstance(per_ref, dict) else None
+    if isinstance(raw, dict):
+        for key in budget:
+            value = raw.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                budget[key] = value
+    return budget
+
+
+def pending_irreversible_policy(config: dict[str, Any] | None) -> list[str]:
+    if not isinstance(config, dict):
+        return []
+    raw = config.get("pending_irreversible_policy")
+    if isinstance(raw, str):
+        return [raw] if raw.strip() else []
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    if isinstance(raw, dict) and raw.get("confirmed") is not True:
+        changes = raw.get("changes")
+        if isinstance(changes, list):
+            return [str(item).strip() for item in changes if str(item).strip()]
+        return ["unspecified"] if raw.get("pending") else []
+    return []
+
+
+def has_blocking_evidence(attempts: list[dict[str, Any]], ref: str) -> bool:
+    return any(
+        attempt.get("ref") == ref
+        and attempt.get("kind") in {"apply", "verify"}
+        and attempt.get("result") in {"blocked", "deviated"}
+        for attempt in attempts
+    )
+
+
+DEPLOYABLE_ROLE_IDS = {
+    "implementer",
+    "test-engineer",
+    "browser-qa-runner",
+    "e2e-artifact-runner",
+    "code-scout",
+    "doc-researcher",
+    "spec-miner",
+}
+EVIDENCE_WRITER_ROLE_IDS = {"browser-qa-runner", "e2e-artifact-runner"}
+READ_ONLY_ROLE_IDS = {
+    "solution-architect",
+    "code-scout",
+    "doc-researcher",
+    "web-researcher",
+    "plan-auditor",
+    "code-reviewer",
+    "security-auditor",
+    "test-coverage-reviewer",
+    "pr-test-analyzer",
+    "ai-regression-scout",
+    "silent-failure-reviewer",
+    "convergence-reviewer",
+    "spec-miner",
+    "agent-evaluator",
+    "opensource-sanitizer",
+    "web-performance-auditor",
+}
+ROLE_WRITE_POLICIES = {
+    "implementer": {"mode": "repo", "roots": ["task-owned implementation/contract files"]},
+    "test-engineer": {"mode": "tests", "roots": ["task-owned test files"]},
+    "browser-qa-runner": {"mode": "evidence", "roots": ["approved evidence root"]},
+    "e2e-artifact-runner": {"mode": "evidence", "roots": ["approved evidence root"]},
+}
+
+
+def parse_scope_tokens(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    quoted = re.findall(r"`([^`]+)`", raw)
+    candidates = quoted or re.split(r"[,，;；]", raw)
+    scopes: list[str] = []
+    for candidate in candidates:
+        value = candidate.strip().replace("\\", "/").rstrip("/")
+        if value.endswith("/**"):
+            value = value[:-3].rstrip("/")
+        elif value.endswith("/*"):
+            value = value[:-2].rstrip("/")
+        elif "*" in value.rsplit("/", 1)[-1] and "/" in value:
+            value = value.rsplit("/", 1)[0]
+        if value and value not in scopes:
+            scopes.append(value)
+    return scopes
+
+
+def is_test_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").lower()
+    name = normalized.rsplit("/", 1)[-1]
+    return (
+        normalized.startswith("tests/")
+        or normalized.startswith("scripts/tests/")
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+    )
+
+
+def infer_candidate_role(task: TaskEntry) -> tuple[str | None, str]:
+    if task.role_id_raw:
+        return task.role_id_raw, "explicit_role_id"
+    if not task.target_files:
+        return None, "no_matching_specialist"
+    test_flags = [is_test_path(path) for path in task.target_files]
+    if all(test_flags):
+        return "test-engineer", "task_owned_tests"
+    if any(test_flags):
+        return None, "clarification_or_split"
+    return "implementer", "task_owned_implementation"
+
+
+def normalize_execution_mode(raw: str | None) -> str:
+    if isinstance(raw, str) and raw.strip().lower() == "sync":
+        return "sync"
+    return "async"
+
+
+def normalize_worktree_mode(raw: str | None) -> str:
+    if isinstance(raw, str) and raw.strip().lower() in {"independent", "isolated"}:
+        return "independent"
+    return "shared"
+
+
+def normalize_join_id(task: TaskEntry, *, change_id: str, fingerprint: str) -> str | None:
+    if isinstance(task.join_raw, str):
+        candidate = task.join_raw.strip()
+        if not candidate or candidate.lower() in {"none", "missing", "null"}:
+            return None
+        return candidate
+    if normalize_worktree_mode(task.worktree_raw) == "shared":
+        return f"join:{change_id}:{fingerprint[:12]}:wave-1"
+    return f"join:{change_id}:{task.ref.lower()}"
+
+
+def write_policy_for_role(role_id: str | None) -> dict[str, Any]:
+    if not role_id:
+        return {"mode": "read_only", "roots": []}
+    if role_id == "rose":
+        return {"mode": "supervisor_direct", "roots": []}
+    return ROLE_WRITE_POLICIES.get(role_id, {"mode": "read_only", "roots": []})
+
+
+def scopes_overlap(left: list[str], right: list[str]) -> bool:
+    for left_scope in left:
+        for right_scope in right:
+            if (
+                left_scope == right_scope
+                or left_scope.startswith(right_scope + "/")
+                or right_scope.startswith(left_scope + "/")
+            ):
+                return True
+    return False
+
+
+def route_ready_wave(
+    change_id: str,
+    fingerprint: str,
+    tasks: list[TaskEntry],
+    selected_batch: list[str],
+) -> tuple[list[str], list[dict[str, Any]]]:
+    task_by_ref = {task.ref: task for task in tasks}
+    admitted_scopes: list[list[str]] = []
+    wave_refs: list[str] = []
+    routes: list[dict[str, Any]] = []
+
+    for ref in selected_batch:
+        task = task_by_ref[ref]
+        task.target_files = parse_scope_tokens(task.files_raw)
+        task.write_scope = parse_scope_tokens(task.write_scope_raw) or list(
+            task.target_files
+        )
+        if not task.write_scope:
+            task.write_scope = [f"ref:{ref}"]
+        task.execution_mode = normalize_execution_mode(task.execution_raw)
+        task.worktree_mode = normalize_worktree_mode(task.worktree_raw)
+        task.join_id = normalize_join_id(task, change_id=change_id, fingerprint=fingerprint)
+        matched_role, role_fit_reason = infer_candidate_role(task)
+        if matched_role == "general":
+            decision = "blocked"
+            direct_reason = "capability_failure"
+            effective_role = None
+        elif matched_role is None:
+            decision = "direct"
+            direct_reason = role_fit_reason
+            effective_role = "rose"
+        elif matched_role == "rose":
+            decision = "direct"
+            direct_reason = "no_matching_specialist"
+            effective_role = "rose"
+        elif matched_role in DEPLOYABLE_ROLE_IDS | READ_ONLY_ROLE_IDS:
+            decision = "dispatch"
+            direct_reason = "N/A"
+            effective_role = matched_role
+        else:
+            decision = "blocked"
+            direct_reason = "capability_failure"
+            effective_role = None
+
+        blockers: list[str] = []
+        disjoint = not any(
+            scopes_overlap(task.write_scope, admitted) for admitted in admitted_scopes
+        )
+        if not task.join_id:
+            blockers.append("missing_join")
+        if decision != "blocked" and not disjoint:
+            decision = "direct"
+            direct_reason = "overlap"
+            effective_role = "rose"
+            blockers.append("write_scope_overlap")
+        elif not disjoint:
+            blockers.append("write_scope_overlap")
+        if decision == "blocked":
+            blockers.append("role_or_capability_blocked")
+        zero_apply_role = effective_role in READ_ONLY_ROLE_IDS
+        if zero_apply_role:
+            blockers.append("zero_apply_role")
+        qualified = (
+            decision != "blocked"
+            and disjoint
+            and bool(task.join_id)
+            and not zero_apply_role
+        )
+        if qualified:
+            wave_refs.append(ref)
+            admitted_scopes.append(task.write_scope)
+        write_policy = write_policy_for_role(effective_role)
+        task.write_policy = write_policy["mode"]
+        task.allowed_write_roots = (
+            list(task.write_scope)
+            if task.write_policy == "supervisor_direct"
+            else list(write_policy["roots"])
+        )
+        task.wave_eligible = qualified
+        task.wave_blockers = blockers
+        route = {
+            "ref": ref,
+            "package_id": f"{change_id}:{ref}:apply",
+            "agent": (
+                f"agents/{change_id}-{ref.lower()}" if decision == "dispatch" else None
+            ),
+            "bounded_non_trivial": True,
+            "matched_role_id": matched_role,
+            "decision": decision,
+            "direct_reason": direct_reason,
+            "effective_role_id": effective_role,
+            "role_fit_reason": role_fit_reason,
+            "write_scope": list(task.write_scope),
+            "execution_mode": task.execution_mode,
+            "join_id": task.join_id,
+            "worktree_mode": task.worktree_mode,
+            "write_policy": task.write_policy,
+            "allowed_write_roots": task.allowed_write_roots,
+            "execution_lane": "zero_apply" if zero_apply_role else "apply",
+            "questions": {
+                "bounded_non_trivial": True,
+                "narrowest_role": decision != "blocked",
+                "write_scope_disjoint": disjoint,
+                "supervisor_join": bool(task.join_id),
+            },
+            "wave_status": "selected" if qualified else (
+                "zero_apply_lane"
+                if zero_apply_role
+                else "deferred_write_overlap"
+                if "write_scope_overlap" in blockers
+                else "blocked"
+            ),
+            "later_wave_eligible": (
+                decision != "blocked" and not disjoint and not zero_apply_role
+            ),
+            "wave_eligible": qualified,
+            "wave_blockers": blockers,
+        }
+        task.routing = route
+        routes.append(route)
+    return wave_refs, routes
+
+
+def apply_budget_snapshot(
+    repo_root: Path,
+    change_id: str,
+    config: dict[str, Any],
+    fingerprint: str,
+) -> dict[str, int]:
+    budgets = merge_budget_defaults(config.get("budgets"))
+    ledger_path = configured_ledger_path(repo_root, config, None)
+    ledger = load_or_init_ledger(ledger_path, change_id)
+    episode = next(
+        (
+            item
+            for item in ledger.get("episodes", [])
+            if item.get("contract_fingerprint") == fingerprint
+        ),
+        None,
+    )
+    revision_used = apply_iteration_count(attempts_for_episode(episode)) if episode else 0
+    change_used = apply_iteration_count(attempts_for_change(ledger))
+    revision_remaining = max(
+        budgets["revision"]["max_iterations"] - revision_used, 0
+    )
+    change_remaining = max(budgets["change"]["max_iterations"] - change_used, 0)
+    return {
+        "revision_apply_used": revision_used,
+        "change_apply_used": change_used,
+        "revision_apply_remaining": revision_remaining,
+        "change_apply_remaining": change_remaining,
+        "apply_remaining": min(revision_remaining, change_remaining),
+    }
+
+
+def apply_runtime_budget_state(
+    repo_root: Path,
+    change_id: str,
+    config: dict[str, Any],
+    fingerprint: str,
+    tasks: list[TaskEntry],
+) -> None:
+    budgets = merge_budget_defaults(config.get("budgets"))
+    attempts: list[dict[str, Any]] = []
+    ledger_path = configured_ledger_path(repo_root, config, None)
+    if ledger_path.is_file():
+        ledger = load_or_init_ledger(ledger_path, change_id)
+        episode = next(
+            (
+                item
+                for item in ledger.get("episodes", [])
+                if item.get("contract_fingerprint") == fingerprint
+            ),
+            None,
+        )
+        if episode is not None:
+            attempts = attempts_for_episode(episode)
+
+    for task in tasks:
+        task_budget = ref_budget_of(config, budgets, task.ref)
+        task.max_apply_attempts = task_budget["max_apply_attempts"]
+        task.max_unblock_runs = task_budget["max_unblock_runs"]
+        task.apply_attempts_used = sum(
+            1
+            for attempt in attempts
+            if attempt.get("ref") == task.ref and attempt.get("kind") == "apply"
+        )
+        task.unblock_runs_used = sum(
+            1
+            for attempt in attempts
+            if attempt.get("ref") == task.ref and attempt.get("kind") == "unblock"
+        )
+        task.unblock_active = has_blocking_evidence(attempts, task.ref)
+        if (
+            not task.completed
+            and task.unblock_runs_used >= task_budget["max_unblock_runs"]
+        ):
+            task.effective_state = "maxed"
+            task.ready = False
+            task.budget_disposition = "stop_budget"
+            if "stop_budget" not in task.blocked_reasons:
+                task.blocked_reasons.append("stop_budget")
 
 
 def build_plan_payload(
@@ -1261,6 +1821,14 @@ def build_plan_payload(
             "candidate_ref": None,
             "selected_ref": None,
             "selected_batch": [],
+            "selected_wave": [],
+            "routing": [],
+            "apply_remaining": 0,
+            "allowed_parallel_applies": 0,
+            "dispatch_refs": [],
+            "fingerprint_ready": False,
+            "wave_ready": False,
+            "irreversible_policy_pending": [],
             "ready_refs": [],
             "blocked_refs": [],
             "terminal_refs": [],
@@ -1276,6 +1844,14 @@ def build_plan_payload(
         fingerprint = compute_semantic_fingerprint(repo_root, change_id)
         narrative_digest = compute_narrative_digest(repo_root, change_id)
         config = load_loop_config(repo_root, change_id)
+        if config is None and not advisory and tasks:
+            config = initialize_thin_loop_config(
+                repo_root,
+                change_id,
+                tasks,
+                fingerprint=fingerprint,
+                narrative_digest=narrative_digest,
+            )
         policy_issues = loop_config_issues(config, change_id)
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         return {
@@ -1289,6 +1865,14 @@ def build_plan_payload(
             "candidate_ref": None,
             "selected_ref": None,
             "selected_batch": [],
+            "selected_wave": [],
+            "routing": [],
+            "apply_remaining": 0,
+            "allowed_parallel_applies": 0,
+            "dispatch_refs": [],
+            "fingerprint_ready": False,
+            "wave_ready": False,
+            "irreversible_policy_pending": [],
             "ready_refs": [],
             "blocked_refs": [],
             "terminal_refs": [],
@@ -1300,14 +1884,19 @@ def build_plan_payload(
     warnings: list[str] = []
     sealed_fingerprint = config.get("contract_fingerprint") if config else None
     sealed_narrative_digest = config.get("narrative_digest") if config else None
-    if config and sealed_fingerprint != fingerprint:
+    fingerprint_ready = bool(config) and sealed_fingerprint == fingerprint
+    if config and not fingerprint_ready:
         policy_issues.append("contract fingerprint drift; re-run interviewer and seal")
     if config and sealed_narrative_digest != narrative_digest:
         message = narrative_drift_message(change_id)
-        if narrative_policy_of(config) == "strict":
-            policy_issues.append(message)
-        else:
-            warnings.append(message)
+        warnings.append(message)
+    irreversible_pending = pending_irreversible_policy(config)
+    if irreversible_pending:
+        policy_issues.append(
+            "unconfirmed irreversible policy: " + ", ".join(irreversible_pending)
+        )
+    if config is not None:
+        apply_runtime_budget_state(repo_root, change_id, config, fingerprint, tasks)
     sealed = not policy_issues
     ready_refs = [task.ref for task in tasks if task.ready]
     terminal_refs = [
@@ -1319,13 +1908,37 @@ def build_plan_payload(
         if not task.completed and not task.ready and task.ref not in terminal_refs
     ]
     candidate_ref = ready_refs[0] if ready_refs else None
-    selected_ref = candidate_ref if advisory or sealed else None
-    if selected_ref is None:
-        selected_batch: list[str] = []
-    elif batch:
-        selected_batch = list(ready_refs)
-    else:
-        selected_batch = [selected_ref]
+    selected_ref = candidate_ref
+    # The batch is a census, not an allowance.  Keeping every dependency-ready
+    # ref visible lets the supervisor make routing and topology decisions
+    # without losing work merely because this invocation dispatches fewer refs.
+    selected_batch = list(ready_refs)
+    routed_wave, routing = route_ready_wave(
+        change_id,
+        fingerprint,
+        tasks,
+        selected_batch,
+    )
+    wave_ready = fingerprint_ready and not irreversible_pending
+    selected_wave = routed_wave if wave_ready else []
+    if not wave_ready:
+        for route in routing:
+            if route["wave_status"] == "selected":
+                route["wave_status"] = "latch_blocked"
+    budget_snapshot = (
+        apply_budget_snapshot(repo_root, change_id, config, fingerprint)
+        if config is not None
+        else {
+            "revision_apply_used": 0,
+            "change_apply_used": 0,
+            "revision_apply_remaining": 0,
+            "change_apply_remaining": 0,
+            "apply_remaining": 0,
+        }
+    )
+    apply_remaining = budget_snapshot["apply_remaining"]
+    allowed_parallel_applies = min(len(selected_wave), apply_remaining)
+    dispatch_refs = selected_wave[:allowed_parallel_applies]
     return {
         "schema_version": SCHEMA_PLAN,
         "change_id": change_id,
@@ -1337,6 +1950,15 @@ def build_plan_payload(
         "candidate_ref": candidate_ref,
         "selected_ref": selected_ref,
         "selected_batch": selected_batch,
+        "selected_wave": selected_wave,
+        "routing": routing,
+        "batch_requested": batch,
+        **budget_snapshot,
+        "allowed_parallel_applies": allowed_parallel_applies,
+        "dispatch_refs": dispatch_refs,
+        "fingerprint_ready": fingerprint_ready,
+        "wave_ready": wave_ready,
+        "irreversible_policy_pending": irreversible_pending,
         "ready_refs": ready_refs,
         "blocked_refs": blocked_refs,
         "terminal_refs": terminal_refs,
@@ -1739,6 +2361,7 @@ def cmd_apply_revision(args: argparse.Namespace) -> int:
         None,
         budgets=budgets,
         hard_ceiling=ceiling,
+        task_budget=None,
         current_allocated_subagents=None,
         prospective_subagent_ids=[],
     )
@@ -1954,6 +2577,65 @@ def seal_changed_fields(prior: dict[str, Any], config: dict[str, Any]) -> list[s
     return changed
 
 
+def recorded_change_apply_iterations(
+    repo_root: Path,
+    change_id: str,
+    paths: dict[str, Any],
+) -> tuple[int, bool]:
+    """Read prior apply usage for a restamp advisory without creating a ledger."""
+    raw_path = paths.get("ledger")
+    if not raw_path:
+        return 0, False
+    ledger_path = Path(str(raw_path))
+    if not ledger_path.is_absolute():
+        ledger_path = repo_root / ledger_path
+    if not ledger_path.exists():
+        return 0, True
+    try:
+        ledger = load_or_init_ledger(ledger_path.resolve(), change_id)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return 0, False
+    return apply_iteration_count(attempts_for_change(ledger)), True
+
+
+def semantic_budget_advisories(
+    repo_root: Path,
+    change_id: str,
+    tasks: list[dict[str, Any]],
+    config: dict[str, Any],
+    *,
+    semantic_change: bool,
+) -> list[dict[str, Any]]:
+    """Warn when remaining work exceeds a confirmed change budget."""
+    if not semantic_change:
+        return []
+
+    budgets = merge_budget_defaults(config.get("budgets"))
+    max_apply_attempts = budgets["task"]["max_apply_attempts"]
+    configured = budgets["change"]["max_iterations"]
+    nonterminal_ref_count = sum(
+        1 for task in tasks if task.get("effective_state") not in TERMINAL_STATES
+    )
+    already_used, usage_known = recorded_change_apply_iterations(
+        repo_root,
+        change_id,
+        config.get("paths") if isinstance(config.get("paths"), dict) else {},
+    )
+    remaining = nonterminal_ref_count * max_apply_attempts
+    recommended = already_used + remaining if usage_known else remaining
+    if configured >= recommended:
+        return []
+
+    return [
+        {
+            "field": "budgets.change.max_iterations",
+            "configured": configured,
+            "recommended": recommended,
+            "shortfall": recommended - configured,
+        }
+    ]
+
+
 def cmd_seal(args: argparse.Namespace) -> int:
     repo_root = args.repo_root.resolve()
     if not args.confirmed:
@@ -2111,6 +2793,26 @@ def cmd_seal(args: argparse.Namespace) -> int:
             }
         )
         return 2
+    prior_per_ref = (
+        prior.get("per_ref_budgets")
+        if isinstance(prior.get("per_ref_budgets"), dict)
+        else {}
+    )
+    per_ref_budgets: dict[str, dict[str, int]] = {}
+    for task in preflight["tasks"]:
+        ref = task["ref"]
+        task_budget = budgets["task"].copy()
+        prior_task_budget = prior_per_ref.get(ref)
+        if isinstance(prior_task_budget, dict):
+            for key in task_budget:
+                value = prior_task_budget.get(key)
+                if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                    task_budget[key] = value
+        if args.max_apply_attempts is not None:
+            task_budget["max_apply_attempts"] = args.max_apply_attempts
+        if args.max_unblock_runs is not None:
+            task_budget["max_unblock_runs"] = args.max_unblock_runs
+        per_ref_budgets[ref] = task_budget
     config = {
         "schema_version": SCHEMA_LOOP,
         "change_id": args.change_id,
@@ -2122,16 +2824,22 @@ def cmd_seal(args: argparse.Namespace) -> int:
         "retention": retention,
         "paths": paths,
         "budgets": budgets,
+        "per_ref_budgets": per_ref_budgets,
         "hard_ceiling": hard_ceiling,
-        "test_profiles": {
-            "attempt": "targeted owner tests; no retained bundle",
-            "promotion": "complete task TEST exactly once before PASS",
-            "final": "whole-change verification plus strict OpenSpec validation",
-            "audit": "legacy monitor only when retention=full or explicitly required",
-        },
+        "test_profiles": DEFAULT_TEST_PROFILES.copy(),
         "confirmed_at": args.confirmed_at or utc_now(),
     }
     changed_fields = seal_changed_fields(prior, config)
+    semantic_change = bool(prior) and (
+        prior.get("contract_fingerprint") != config["contract_fingerprint"]
+    )
+    budget_advisories = semantic_budget_advisories(
+        repo_root,
+        args.change_id,
+        preflight["tasks"],
+        config,
+        semantic_change=semantic_change,
+    )
     path = loop_config_path(repo_root, args.change_id)
     write_json_atomic(path, config)
     emit_json(
@@ -2141,7 +2849,9 @@ def cmd_seal(args: argparse.Namespace) -> int:
             "written": True,
             "path": str(path),
             "inherited_from_prior_seal": bool(prior),
+            "semantic_change": semantic_change,
             "changed_fields": changed_fields,
+            "budget_advisories": budget_advisories,
             "contract_fingerprint": config["contract_fingerprint"],
             "narrative_digest": config["narrative_digest"],
         }
@@ -2329,6 +3039,14 @@ def cmd_reseal(args: argparse.Namespace) -> int:
     if post_issues:
         return reseal_failure(change_id, post_issues)
 
+    restamp_plan = build_plan_payload(repo_root, change_id, advisory=True)
+    budget_advisories = semantic_budget_advisories(
+        repo_root,
+        change_id,
+        restamp_plan["tasks"],
+        updated,
+        semantic_change=semantic_change,
+    )
     updated["resealed_at"] = utc_now()
     path = loop_config_path(repo_root, change_id)
     write_json_atomic(path, updated)
@@ -2342,6 +3060,7 @@ def cmd_reseal(args: argparse.Namespace) -> int:
             "semantic_change": semantic_change,
             "revision_charged": False,
             "changed_fields": changed_fields,
+            "budget_advisories": budget_advisories,
             "autonomy": updated["autonomy"],
             "hard_ceiling": updated["hard_ceiling"],
             "self_extensions_used": self_extensions_used(updated),
@@ -2492,16 +3211,309 @@ def cmd_sync(args: argparse.Namespace) -> int:
     return 0 if payload["sealed"] and not payload["issues"] else 2
 
 
+def canonical_apply_status(result: str) -> str:
+    normalized = result.strip().lower()
+    if normalized in {"completed", "success"}:
+        return "completed"
+    if normalized in {"failed", "failure", "fail"}:
+        return "failed"
+    if normalized in {"no_progress", "partial"}:
+        return "partial"
+    if normalized in {"deviated", "unverified"}:
+        return "unverified"
+    if normalized in {"empty", "blocked"}:
+        return normalized
+    raise ValueError(f"unsupported canonical Apply result: {result}")
+
+
+def normalize_record_path(raw: str) -> str:
+    normalized = raw.strip().replace("\\", "/").rstrip("/")
+    if ".." in normalized.split("/"):
+        raise ValueError(f"record path may not traverse its declared scope: {raw}")
+    return normalized
+
+
+def path_within_declared_scope(path: str, scopes: list[str]) -> bool:
+    normalized = normalize_record_path(path)
+    return any(
+        normalized == scope or normalized.startswith(scope + "/")
+        for scope in scopes
+    )
+
+
+def path_within_approved_root(repo_root: Path, path: str, root: str) -> bool:
+    candidate = Path(path)
+    approved = Path(root)
+    candidate = candidate if candidate.is_absolute() else repo_root / candidate
+    approved = approved if approved.is_absolute() else repo_root / approved
+    try:
+        candidate.resolve().relative_to(approved.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def approved_evidence_root(config: dict[str, Any]) -> str | None:
+    profile = config.get("retention_profile")
+    if isinstance(profile, dict):
+        retained = profile.get("retained")
+        if isinstance(retained, str) and retained.strip():
+            return retained.strip()
+    paths = config.get("paths")
+    if isinstance(paths, dict):
+        bundle = paths.get("bundle")
+        if isinstance(bundle, str) and bundle.strip():
+            return bundle.strip()
+    return None
+
+
+def record_task_context(
+    repo_root: Path,
+    change_id: str,
+    ref: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    if "," in ref or "，" in ref or ";" in ref:
+        raise ValueError("one Apply packet may bind exactly one ref")
+    payload = build_plan_payload(repo_root, change_id, advisory=False, batch=True)
+    task = next((item for item in payload.get("tasks", []) if item["ref"] == ref), None)
+    if task is None:
+        raise ValueError(f"unknown active ref `{ref}`")
+    route = next(
+        (item for item in payload.get("routing", []) if item["ref"] == ref),
+        task.get("routing") or {},
+    )
+    return payload, task, route
+
+
+def validate_record_writes(
+    repo_root: Path,
+    config: dict[str, Any],
+    task: dict[str, Any],
+    role_id: str,
+    changed_files: list[str],
+) -> None:
+    if not changed_files:
+        return
+    scopes = [normalize_record_path(item) for item in task.get("write_scope", [])]
+    if role_id in {"implementer", "test-engineer", "rose"}:
+        if not scopes:
+            raise ValueError(f"task `{task['ref']}` has no declared write_scope")
+        outside = [
+            item for item in changed_files if not path_within_declared_scope(item, scopes)
+        ]
+        if outside:
+            raise ValueError(
+                f"role_write_scope_violation:{role_id}:" + ",".join(outside)
+            )
+        if role_id == "implementer" and any(is_test_path(item) for item in changed_files):
+            raise ValueError("role_write_allowlist:implementer_cannot_write_tests")
+        if role_id == "test-engineer" and any(
+            not is_test_path(item) for item in changed_files
+        ):
+            raise ValueError("role_write_allowlist:test_engineer_tests_only")
+        return
+    if role_id in EVIDENCE_WRITER_ROLE_IDS:
+        root = approved_evidence_root(config)
+        if root is None:
+            raise ValueError("role_write_allowlist:no_approved_evidence_root")
+        outside = [
+            item
+            for item in changed_files
+            if not path_within_approved_root(repo_root, item, root)
+        ]
+        if outside:
+            raise ValueError(
+                f"role_write_allowlist:evidence_root:" + ",".join(outside)
+            )
+        return
+    raise ValueError(f"role_write_allowlist:{role_id}:read_only")
+
+
 def cmd_record(args: argparse.Namespace) -> int:
-    _, _, fingerprint, ledger_path, _, warnings = resolve_runtime_policy(args)
+    repo_root, config, fingerprint, ledger_path, budgets, warnings = resolve_runtime_policy(args)
     ledger = load_or_init_ledger(ledger_path, args.change_id)
-    _, run = load_run(ledger, args.change_id, fingerprint, args.run_id)
+    episode, run = load_run(ledger, args.change_id, fingerprint, args.run_id)
+    revision_attempts = attempts_for_episode(episode)
+    task_budget = ref_budget_of(config, budgets, args.ref)
+    if args.record_owner != "supervisor":
+        raise ValueError("only the supervisor may write canonical Loop records")
+    if args.kind == "apply" and any(
+        delimiter in args.ref for delimiter in (",", "，", ";")
+    ):
+        raise ValueError("one Apply packet may bind exactly one ref")
+    if args.kind == "apply" and args.result == "pass":
+        raise ValueError("an Apply worker may not claim PASS")
+    strict_apply = args.kind == "apply" and any(
+        (
+            args.attempt_id,
+            args.packet_id,
+            args.role_id,
+            args.changed_file,
+            args.evidence,
+            args.join_id,
+            args.wave_ref,
+            args.transient_retries,
+        )
+    )
+    payload: dict[str, Any] = {}
+    task: dict[str, Any] = {}
+    route: dict[str, Any] = {}
+    if strict_apply:
+        payload, task, route = record_task_context(
+            repo_root,
+            args.change_id,
+            args.ref,
+        )
+    if args.kind == "unblock":
+        if not has_blocking_evidence(revision_attempts, args.ref):
+            raise ValueError(f"task_unblock_dormant:{args.ref}")
+        if args.disposition is None:
+            raise ValueError("unblock records require --disposition")
+        prior_unblocks = [
+            attempt
+            for attempt in revision_attempts
+            if attempt.get("ref") == args.ref and attempt.get("kind") == "unblock"
+        ]
+        max_unblock_runs = task_budget["max_unblock_runs"]
+        if len(prior_unblocks) >= max_unblock_runs:
+            raise ValueError(
+                f"task_unblock_budget_exhausted:{args.ref}:{max_unblock_runs}"
+            )
+        if len(prior_unblocks) == 1:
+            second_unblock_issues = second_unblock_reasons(
+                revision_attempts,
+                args.ref,
+            )
+            if second_unblock_issues:
+                raise ValueError("; ".join(second_unblock_issues))
+            prior_apply_count = apply_iteration_count(
+                [attempt for attempt in revision_attempts if attempt.get("ref") == args.ref]
+            )
+            retry_dispositions = {"retry", "targeted_probe"}
+            if (
+                prior_apply_count >= task_budget["max_apply_attempts"]
+                and args.disposition in retry_dispositions
+            ):
+                raise ValueError(
+                    "second unblock is terminal after the final apply attempt; "
+                    "use amend_spec, supersede_task, or stop_budget"
+                )
     allocated_subagent_ids = normalize_subagent_ids(args.subagent_id)
     if not allocated_subagent_ids and args.subagents_used:
         existing = len(run.setdefault("allocated_subagent_ids", []))
         allocated_subagent_ids = [
             f"legacy-anon-{args.run_id}-{existing + index + 1}" for index in range(args.subagents_used)
         ]
+    runtime_trace_ids = list(allocated_subagent_ids)
+    if args.kind in ZERO_APPLY_KINDS:
+        allocated_subagent_ids = []
+
+    apply_record_owner = "supervisor" if args.kind == "apply" else None
+    attempt_id: str | None = None
+    packet_id: str | None = None
+    role_id: str | None = None
+    join_id: str | None = None
+    wave_refs: list[str] = []
+    worktree_mode: str | None = None
+    terminal_status: str | None = None
+    changed_files = [
+        normalize_record_path(item)
+        for item in args.changed_file
+        if item and item.strip()
+    ]
+    evidence = [item.strip() for item in args.evidence if item and item.strip()]
+    if args.kind == "apply":
+        prior_apply_count = sum(
+            1
+            for item in revision_attempts
+            if item.get("ref") == args.ref and item.get("kind") == "apply"
+        )
+        attempt_id = args.attempt_id or (
+            f"legacy:{args.run_id}:{args.ref}:{prior_apply_count + 1}"
+        )
+        if any(
+            item.get("kind") == "apply" and item.get("attempt_id") == attempt_id
+            for item in revision_attempts
+        ):
+            raise ValueError(f"duplicate canonical Apply attempt_id `{attempt_id}`")
+        expected_packet_id = (
+            f"{route.get('package_id')}:{attempt_id}"
+            if strict_apply and route.get("package_id")
+            else f"{args.change_id}:{args.ref}:{attempt_id}"
+        )
+        if args.packet_id and args.packet_id != expected_packet_id:
+            raise ValueError("Apply packet_id does not match the routed packet snapshot")
+        packet_id = expected_packet_id
+        if any(
+            item.get("kind") == "apply" and item.get("packet_id") == packet_id
+            for item in revision_attempts
+        ):
+            raise ValueError(f"duplicate canonical Apply packet_id `{packet_id}`")
+        expected_role_id = route.get("effective_role_id") or "rose"
+        if strict_apply and args.role_id and args.role_id != expected_role_id:
+            raise ValueError("Apply Role ID does not match the routed packet snapshot")
+        role_id = expected_role_id
+        if role_id == "general":
+            raise ValueError("general is not a deployable Apply Role ID")
+        if strict_apply and role_id in READ_ONLY_ROLE_IDS:
+            raise ValueError(f"zero-Apply read-only role cannot own Apply: {role_id}")
+        if strict_apply:
+            validate_record_writes(repo_root, config, task, role_id, changed_files)
+        elif changed_files:
+            raise ValueError("changed files require an active packet write_scope")
+        expected_join_id = route.get("join_id")
+        if strict_apply and args.join_id and args.join_id != expected_join_id:
+            raise ValueError("Apply join_id does not match the routed packet snapshot")
+        join_id = expected_join_id if strict_apply else args.join_id
+        worktree_mode = route.get("worktree_mode") or "legacy"
+        expected_wave_refs = (
+            [args.ref]
+            if worktree_mode == "independent"
+            else [
+                item["ref"]
+                for item in payload.get("routing", [])
+                if item.get("join_id") == join_id
+                and item["ref"] in payload.get("selected_wave", [])
+            ]
+        )
+        if args.wave_ref:
+            for wave_ref in args.wave_ref:
+                candidate = wave_ref.strip()
+                if "," in candidate or "，" in candidate or ";" in candidate:
+                    raise ValueError("each --wave-ref must name exactly one ref")
+                if candidate and candidate not in wave_refs:
+                    wave_refs.append(candidate)
+        elif strict_apply and join_id:
+            wave_refs = list(expected_wave_refs)
+        if not wave_refs:
+            wave_refs = [args.ref]
+        if args.ref not in wave_refs:
+            raise ValueError("Apply wave snapshot must contain its packet ref")
+        if strict_apply:
+            if wave_refs != expected_wave_refs:
+                raise ValueError(
+                    "Apply wave_refs must equal the routed join group in ready order"
+                )
+            known_refs = {item["ref"] for item in payload.get("tasks", [])}
+            unknown_wave_refs = [item for item in wave_refs if item not in known_refs]
+            if unknown_wave_refs:
+                raise ValueError(
+                    "unknown Apply wave refs: " + ",".join(unknown_wave_refs)
+                )
+        terminal_status = canonical_apply_status(args.result)
+        if terminal_status not in CANONICAL_APPLY_STATUSES:
+            raise ValueError(f"non-terminal Apply result: {terminal_status}")
+        if args.transient_retries < 0:
+            raise ValueError("--transient-retries must be non-negative")
+    elif args.kind == "verify" and args.join_id:
+        join_reasons = historical_join_reasons(
+            attempts_for_episode(episode),
+            args.ref,
+            args.join_id,
+        )
+        if join_reasons:
+            raise ValueError("; ".join(join_reasons))
+
     attempt = {
         "recorded_at_utc": utc_now(),
         "ref": args.ref,
@@ -2512,7 +3524,28 @@ def cmd_record(args: argparse.Namespace) -> int:
         "result_fingerprint": error_fingerprint(args.observation_text or args.error_text),
         "disposition": args.disposition,
         "allocated_subagent_ids": allocated_subagent_ids,
+        "runtime_trace_ids": runtime_trace_ids,
         "duration_seconds": max(args.duration_seconds, 0),
+        "apply_record_owner": apply_record_owner,
+        "consumes_apply_attempt": args.kind == "apply",
+        "consumes_scheduling_headcount": (
+            args.kind == "apply"
+            and role_id != "rose"
+            and bool(route.get("agent"))
+        ),
+        "canonical_apply_record": args.kind == "apply",
+        "attempt_id": attempt_id,
+        "packet_id": packet_id,
+        "role_id": role_id,
+        "changed_files": changed_files,
+        "evidence": evidence,
+        "join_id": join_id,
+        "wave_refs": wave_refs,
+        "worktree_mode": worktree_mode,
+        "terminal_status": terminal_status,
+        "transient_retries": args.transient_retries if args.kind == "apply" else 0,
+        "auto_redispatch": False if args.kind == "apply" else None,
+        "next_apply_owner": "supervisor_gate" if args.kind == "apply" else None,
     }
     run.setdefault("attempts", []).append(attempt)
     run_allocated = run.setdefault("allocated_subagent_ids", [])
@@ -2527,6 +3560,10 @@ def cmd_record(args: argparse.Namespace) -> int:
             "ledger_path": str(ledger_path),
             "run_id": args.run_id,
             "contract_fingerprint": fingerprint,
+            "apply_record_owner": apply_record_owner,
+            "attempt_id": attempt_id,
+            "packet_id": packet_id,
+            "terminal_status": terminal_status,
             "warnings": warnings,
         }
     )
@@ -2572,6 +3609,166 @@ def active_seconds(attempts: list[dict[str, Any]]) -> int:
     return sum(max(int(attempt.get("duration_seconds", 0) or 0), 0) for attempt in attempts)
 
 
+def apply_iteration_count(attempts: list[dict[str, Any]]) -> int:
+    """Count only Apply actions; verification and diagnosis remain observable."""
+    return sum(1 for attempt in attempts if attempt.get("kind") == "apply")
+
+
+def latest_attempt_for_ref(
+    attempts: list[dict[str, Any]],
+    ref: str,
+    *,
+    kind: str,
+) -> dict[str, Any] | None:
+    for attempt in reversed(attempts):
+        if attempt.get("ref") == ref and attempt.get("kind") == kind:
+            return attempt
+    return None
+
+
+def status_of_apply_record(attempt: dict[str, Any]) -> str | None:
+    recorded = attempt.get("terminal_status")
+    if isinstance(recorded, str) and recorded in CANONICAL_APPLY_STATUSES:
+        return recorded
+    result = attempt.get("result")
+    if not isinstance(result, str):
+        return None
+    try:
+        return canonical_apply_status(result)
+    except ValueError:
+        return None
+
+
+def historical_join_reasons(
+    episode_attempts: list[dict[str, Any]],
+    ref: str,
+    join_id: str,
+) -> list[str]:
+    own = next(
+        (
+            attempt
+            for attempt in reversed(episode_attempts)
+            if attempt.get("kind") == "apply"
+            and attempt.get("ref") == ref
+            and attempt.get("join_id") == join_id
+        ),
+        None,
+    )
+    if own is None:
+        return [f"verify_requires_apply_result:{ref}:{join_id}"]
+    wave_refs = [
+        str(item)
+        for item in own.get("wave_refs", [])
+        if isinstance(item, str) and item
+    ] or [ref]
+    if own.get("worktree_mode") != "independent":
+        pending: list[str] = []
+        for candidate in wave_refs:
+            latest = next(
+                (
+                    attempt
+                    for attempt in reversed(episode_attempts)
+                    if attempt.get("kind") == "apply"
+                    and attempt.get("ref") == candidate
+                    and attempt.get("join_id") == join_id
+                ),
+                None,
+            )
+            if latest is None or status_of_apply_record(latest) is None:
+                pending.append(candidate)
+        if pending:
+            return [f"wave_join_pending:{join_id}:" + ",".join(pending)]
+    own_status = status_of_apply_record(own)
+    if own_status != "completed":
+        return [f"verify_requires_completed_apply:{ref}:{own_status or 'missing'}"]
+    evidence = own.get("evidence")
+    if not isinstance(evidence, list) or not any(str(item).strip() for item in evidence):
+        return [f"verify_requires_inspectable_evidence:{ref}"]
+    return []
+
+
+def verify_wave_reasons(
+    repo_root: Path,
+    change_id: str,
+    fingerprint: str,
+    episode: dict[str, Any],
+    ref: str | None,
+) -> list[str]:
+    if not ref:
+        return []
+    episode_attempts = attempts_for_episode(episode)
+    latest_own = latest_attempt_for_ref(episode_attempts, ref, kind="apply")
+    if latest_own and latest_own.get("join_id"):
+        return historical_join_reasons(
+            episode_attempts,
+            ref,
+            str(latest_own["join_id"]),
+        )
+    payload = build_plan_payload(repo_root, change_id, advisory=False, batch=True)
+    if ref not in payload.get("selected_wave", []):
+        return []
+    tasks = {item["ref"]: item for item in payload.get("tasks", [])}
+    task = tasks.get(ref)
+    if not task:
+        return []
+    if task.get("worktree_mode") == "independent":
+        return []
+    wave_refs = payload.get("selected_wave", [])
+    pending = [
+        candidate
+        for candidate in wave_refs
+        if latest_attempt_for_ref(episode_attempts, candidate, kind="apply") is None
+    ]
+    if pending:
+        return ["wave_join_pending:" + ",".join(pending)]
+    latest = latest_attempt_for_ref(episode_attempts, ref, kind="apply")
+    if latest is None:
+        return [f"verify_requires_apply_result:{ref}"]
+    result = str(latest.get("result") or "").strip().lower()
+    if result not in TERMINAL_APPLY_RESULTS:
+        return [f"verify_requires_terminal_apply:{ref}:{result or 'missing'}"]
+    if result not in COMPLETED_APPLY_RESULTS:
+        return [f"verify_requires_completed_apply:{ref}:{result}"]
+    return []
+
+
+def second_unblock_reasons(
+    revision_attempts: list[dict[str, Any]],
+    ref: str,
+) -> list[str]:
+    """Require a completed second attempt and decision-changing evidence."""
+    ref_attempts = [
+        attempt for attempt in revision_attempts if attempt.get("ref") == ref
+    ]
+    reasons: list[str] = []
+    if apply_iteration_count(ref_attempts) < 2:
+        reasons.append(f"second_unblock_requires_second_apply:{ref}")
+
+    blocking = [
+        attempt
+        for attempt in ref_attempts
+        if attempt.get("kind") in {"apply", "verify"}
+        and attempt.get("result") in {"blocked", "deviated"}
+    ]
+    if len(blocking) < 2:
+        reasons.append(f"second_unblock_requires_two_blocking_results:{ref}")
+        return reasons
+
+    prior_fingerprint = blocking[-2].get("result_fingerprint") or blocking[-2].get(
+        "error_fingerprint"
+    )
+    latest_fingerprint = blocking[-1].get("result_fingerprint") or blocking[-1].get(
+        "error_fingerprint"
+    )
+    if (
+        not prior_fingerprint
+        or not latest_fingerprint
+        or prior_fingerprint == latest_fingerprint
+    ):
+        reasons.append(f"second_unblock_requires_new_evidence:{ref}")
+    return reasons
+
+
 def gate_reasons(
     ledger: dict[str, Any],
     episode: dict[str, Any],
@@ -2580,7 +3777,8 @@ def gate_reasons(
     next_kind: str | None,
     *,
     budgets: dict[str, dict[str, int]],
-    hard_ceiling: dict[str, int],
+    hard_ceiling: dict[str, int] | None,
+    task_budget: dict[str, int] | None,
     current_allocated_subagents: int | None,
     prospective_subagent_ids: list[str],
 ) -> list[str]:
@@ -2588,16 +3786,12 @@ def gate_reasons(
     run_attempts = run.get("attempts", [])
     revision_attempts = attempts_for_episode(episode)
     change_attempts = attempts_for_change(ledger)
-    task_budget = budgets["task"]
+    task_budget = task_budget or budgets["task"]
     revision_budget = budgets["revision"]
     change_budget = budgets["change"]
 
-    revision_iterations = sum(
-        1 for attempt in revision_attempts if attempt.get("kind") == "apply"
-    )
-    change_iterations = sum(
-        1 for attempt in change_attempts if attempt.get("kind") == "apply"
-    )
+    revision_iterations = apply_iteration_count(revision_attempts)
+    change_iterations = apply_iteration_count(change_attempts)
     if next_kind in {None, "apply"}:
         if revision_iterations >= revision_budget["max_iterations"]:
             reasons.append(
@@ -2619,32 +3813,19 @@ def gate_reasons(
             f"change_active_minutes_reached:{change_budget['max_active_minutes']}"
         )
 
-    # The ceiling is the one stop no reseal can raise, so it is evaluated
-    # against recorded work rather than against the extendable budget.
-    if next_kind in {None, "apply"} and change_iterations >= hard_ceiling["max_iterations"]:
-        reasons.append(f"hard_ceiling_iterations_reached:{hard_ceiling['max_iterations']}")
-    if change_minutes >= hard_ceiling["max_active_minutes"]:
-        reasons.append(
-            f"hard_ceiling_active_minutes_reached:{hard_ceiling['max_active_minutes']}"
-        )
+    # Legacy hard-ceiling policy is retained for diagnostics and migration.
+    # It is not a change-wide Apply stop; an exhaustible stop budget belongs to
+    # the affected ref's unblock latch and cannot stop independent ready refs.
+    _ = hard_ceiling
 
     revision_count = productive_revision_count(ledger)
     if revision_count > change_budget["max_revisions"]:
         reasons.append(f"change_max_revisions_exceeded:{change_budget['max_revisions']}")
 
-    allocated_ids = {
-        subagent_id
-        for revision_run in episode.get("runs", [])
-        for subagent_id in revision_run.get("allocated_subagent_ids", [])
-    }
-    allocated_ids.update(prospective_subagent_ids)
-    distinct_allocated = len(allocated_ids)
-    if current_allocated_subagents is not None:
-        distinct_allocated = max(distinct_allocated, current_allocated_subagents)
-    if distinct_allocated > revision_budget["max_subagents"]:
-        reasons.append(
-            f"revision_max_subagents_exceeded:{revision_budget['max_subagents']}"
-        )
+    # Runtime IDs and headcount are observable capacity signals only.  Apply
+    # authority is bounded by iteration/minute/breaker and write topology, not
+    # by host_soft_cap/max_subagents/distinct-worker counts.
+    _ = current_allocated_subagents, prospective_subagent_ids
 
     if next_ref and next_kind == "apply":
         prior = [
@@ -2667,6 +3848,8 @@ def gate_reasons(
             )
 
     if next_ref and next_kind == "unblock":
+        if not has_blocking_evidence(revision_attempts, next_ref):
+            reasons.append(f"task_unblock_dormant:{next_ref}")
         prior = [
             attempt
             for attempt in revision_attempts
@@ -2676,6 +3859,8 @@ def gate_reasons(
             reasons.append(
                 f"task_unblock_budget_exhausted:{next_ref}:{task_budget['max_unblock_runs']}"
             )
+        elif len(prior) == 1:
+            reasons.extend(second_unblock_reasons(revision_attempts, next_ref))
 
     if len(run_attempts) >= 2:
         last_two = run_attempts[-2:]
@@ -2697,19 +3882,19 @@ def gate_reasons(
 def cmd_gate(args: argparse.Namespace) -> int:
     _, config, fingerprint, ledger_path, budgets, warnings = resolve_runtime_policy(args)
     ceiling = hard_ceiling_of(config)
-    # A caller may relax a revision budget, but never past the sealed ceiling.
+    # Per-run overrides retain their ordinary iteration/minute semantics.  A
+    # legacy hard ceiling is diagnostic and does not cap or terminalize Apply.
     if args.max_iterations is not None:
-        budgets["revision"]["max_iterations"] = min(
-            args.max_iterations, ceiling["max_iterations"]
-        )
+        budgets["revision"]["max_iterations"] = args.max_iterations
     if args.max_active_minutes is not None:
-        budgets["revision"]["max_active_minutes"] = min(
-            args.max_active_minutes, ceiling["max_active_minutes"]
-        )
+        budgets["revision"]["max_active_minutes"] = args.max_active_minutes
     if args.max_subagents is not None:
         budgets["revision"]["max_subagents"] = args.max_subagents
     if args.max_apply_attempts is not None:
         budgets["task"]["max_apply_attempts"] = args.max_apply_attempts
+    task_budget = ref_budget_of(config, budgets, args.ref)
+    if args.max_apply_attempts is not None:
+        task_budget["max_apply_attempts"] = args.max_apply_attempts
     ledger = load_or_init_ledger(ledger_path, args.change_id)
     episode, run = load_run(ledger, args.change_id, fingerprint, args.run_id)
     reasons = gate_reasons(
@@ -2720,12 +3905,20 @@ def cmd_gate(args: argparse.Namespace) -> int:
         args.kind,
         budgets=budgets,
         hard_ceiling=ceiling,
+        task_budget=task_budget,
         current_allocated_subagents=args.current_allocated_subagents,
         prospective_subagent_ids=normalize_subagent_ids(args.subagent_id),
     )
-    terminal_reasons = [
-        reason for reason in reasons if reason.startswith("hard_ceiling_")
-    ]
+    if args.kind == "verify":
+        reasons.extend(
+            verify_wave_reasons(
+                args.repo_root.resolve(),
+                args.change_id,
+                fingerprint,
+                episode,
+                args.ref,
+            )
+        )
     # Persist a newly created run before any maker work begins. Without this,
     # repeated pre-attempt gate calls would reset started_at_utc and silently
     # bypass the per-run time budget until the first record command.
@@ -2739,7 +3932,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
             "contract_fingerprint": fingerprint,
             "run_id": args.run_id,
             "decision": "stop" if reasons else "continue",
-            "terminal": bool(terminal_reasons),
+            "terminal": False,
             "reasons": reasons,
             "warnings": warnings,
             "attempt_count": len(attempts),
@@ -2761,6 +3954,8 @@ def cmd_summary(args: argparse.Namespace) -> int:
     attempts = run.get("attempts", [])
     revision_attempts = attempts_for_episode(episode)
     change_attempts = attempts_for_change(ledger)
+    revision_apply_iterations_used = apply_iteration_count(revision_attempts)
+    change_apply_iterations_used = apply_iteration_count(change_attempts)
     per_ref: dict[str, dict[str, int]] = {}
     for attempt in attempts:
         ref = attempt.get("ref") or "unknown"
@@ -2779,6 +3974,17 @@ def cmd_summary(args: argparse.Namespace) -> int:
             "attempt_count": len(attempts),
             "revision_attempt_count": len(revision_attempts),
             "change_attempt_count": len(change_attempts),
+            "revision_apply_iterations_used": revision_apply_iterations_used,
+            "revision_apply_iterations_remaining": max(
+                budgets["revision"]["max_iterations"]
+                - revision_apply_iterations_used,
+                0,
+            ),
+            "change_apply_iterations_used": change_apply_iterations_used,
+            "change_apply_iterations_remaining": max(
+                budgets["change"]["max_iterations"] - change_apply_iterations_used,
+                0,
+            ),
             "revision_active_seconds": active_seconds(revision_attempts),
             "change_active_seconds": active_seconds(change_attempts),
             "revision_count": productive_revision_count(ledger),
@@ -2788,6 +3994,7 @@ def cmd_summary(args: argparse.Namespace) -> int:
             "autonomy": autonomy_of(config),
             "hard_ceiling": hard_ceiling_of(config),
             "self_extensions_used": self_extensions_used(config),
+            "attempts": attempts,
             "latest_attempt": attempts[-1] if attempts else None,
             "per_ref": per_ref,
         }
@@ -2810,8 +4017,8 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument(
         "--batch",
         action="store_true",
-        help="widen selected_batch from the single selected ref to the whole "
-        "ready set, which is mutually independent by construction",
+        help="legacy compatibility flag; selected_batch is always the complete "
+        "dependency-ready census",
     )
     plan.set_defaults(func=cmd_plan)
 
@@ -2928,12 +4135,25 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--ref", required=True)
     record.add_argument(
         "--kind",
-        choices=("apply", "verify", "explore", "unblock"),
+        choices=("apply", "verify", "explore", "unblock", "goal", "stop_hook", "review"),
         required=True,
     )
     record.add_argument(
         "--result",
-        choices=("success", "failure", "blocked", "deviated", "no_progress", "pass", "fail"),
+        choices=(
+            "success",
+            "failure",
+            "completed",
+            "failed",
+            "empty",
+            "partial",
+            "blocked",
+            "deviated",
+            "unverified",
+            "no_progress",
+            "pass",
+            "fail",
+        ),
         required=True,
     )
     record.add_argument("--action", default="")
@@ -2945,6 +4165,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     record.add_argument("--subagents-used", type=int, default=0)
     record.add_argument("--subagent-id", action="append", default=[])
+    record.add_argument(
+        "--record-owner",
+        choices=("supervisor", "worker"),
+        default="supervisor",
+    )
+    record.add_argument("--attempt-id")
+    record.add_argument("--packet-id")
+    record.add_argument("--role-id")
+    record.add_argument("--changed-file", action="append", default=[])
+    record.add_argument("--evidence", action="append", default=[])
+    record.add_argument("--join-id")
+    record.add_argument("--wave-ref", action="append", default=[])
+    record.add_argument("--transient-retries", type=int, default=0)
     record.add_argument("--duration-seconds", type=int, default=0)
     record.add_argument("--ledger-path", type=Path)
     record.set_defaults(func=cmd_record)
