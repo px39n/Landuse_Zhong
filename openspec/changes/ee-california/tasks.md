@@ -13,9 +13,9 @@ The operative registry is R5--R12. The former sealed R1--R4 registry and its ina
   - ACCEPT: Golden tests distinguish the intentional correction from legacy full-axis behavior, including 2018 events that only reach min5 in 2022, isolated post-cutoff crop, built, NoData, missing extension years, recultivation, multiple exits, and `extend_validation=False`; all local paths create zero GEE operations, GCS objects, or Assets.
   - TEST: SCOPE: CLI; Run: python -m pytest tests/test_cropland_abandonment.py tests/test_abandonment_legacy_audit.py tests/test_mode2_runner_contract.py -q
 
-- [ ] 6.1 Route the runner, generator, and final active Process cell through the public API [#R6]
+- [x] 6.1 Route the runner, generator, and final active Process cell through the public API [#R6]
   - DEPENDS_ON: R5
-  - STATE: pending
+  - STATE: passed
   - ACCEPT: `tools/run_mode2_end_to_end.py`, the prediction/multiscale orchestration that owns the same path, and `tools/update_process_notebook_contract.py` call the public function instead of copying regex, Numba, cutoff, extension, chunk, or manifest logic.
   - ACCEPT: `build_prediction_embedding` and the owning prediction runner implement the confirmed local AOI exactly: inclusive bbox `[-125,-65] x [25,49]`, `data/cb_2018_us_state_500k.shp`, excluded `STATEFP=02,15,60,66,69,72,78`, and inner point-center `sjoin(..., predicate="within")`. The complete CSV preserves the established prediction schema; acceptance rebuilds the companion state-membership frame, binds its row-key/state hash and counts, and California consumers reconstruct a hash-bound `STATEFP=06` subset without publishing a California-only `us_abandon_clean_{feature}.csv`.
   - ACCEPT: The final active cell in `Process.ipynb` contains only imports, the six canonical parameters, the public call, and compact receipt inspection. Commented legacy cells remain byte-preserved, and notebook/generator parity tests prove regeneration produces the same active cells.

@@ -1,0 +1,6 @@
+source_key,resolution,status_year,area_mha,comparison_role,delta_vs_1km_mode_mha,delta_vs_1km_mode_percent
+esa_cci_1km_mean,1km,2020,4.7286486760953785,legacy_mean,0.6387608941739007,15.618054289836852
+esa_cci_1km_mode,1km,2020,4.089887781921478,main_mode,0.0,0.0
+esa_cci_300m,300m,2020,3.689194247643838,native_detection,-0.4006935342776399,-9.797176735479752
+lcmap_c13_30m,30m,2020,7.2794223,native_detection,3.1895345180785224,77.98586876092824
+xie_2024_30m,30m,2018,12.268192553480853,external_event,,

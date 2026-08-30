@@ -23,8 +23,8 @@
       "id": "6.1",
       "ref": "R6",
       "title": "Route the runner, generator, and final active Process cell through the public API",
-      "state": "pending",
-      "passes": false,
+      "state": "passed",
+      "passes": true,
       "depends_on": [
         "R5"
       ],
@@ -120,5 +120,12 @@
       "accept_hash": "471b988851e343920030a2d700bdb13baff9c9bfb0b2c8548c7eda7361b51908",
       "test_hash": "22a5c7b7144b05f4e653c2f2305d8eb7082b7a35bbe8d6df72553264cbd627f7"
     }
-  }
+  },
+  "quality_warnings": [
+    "task R7 ACCEPT lacks a path-like product anchor or NO_ARTIFACT: (warn; pass --strict-quality to fail)",
+    "task R8 ACCEPT lacks a path-like product anchor or NO_ARTIFACT: (warn; pass --strict-quality to fail)",
+    "task R10 ACCEPT lacks a path-like product anchor or NO_ARTIFACT: (warn; pass --strict-quality to fail)",
+    "task R11 ACCEPT lacks a path-like product anchor or NO_ARTIFACT: (warn; pass --strict-quality to fail)",
+    "task R12 ACCEPT lacks a path-like product anchor or NO_ARTIFACT: (warn; pass --strict-quality to fail)"
+  ]
 }
