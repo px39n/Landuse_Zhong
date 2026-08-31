@@ -432,7 +432,7 @@ run id 或 revision 静默重置。
 `revision_attempt_count` / `change_attempt_count` 可以包含 Apply、Verify、Explore、
 Unblock 等记录，不能拿来冒充 Apply 使用量。聚合 Apply 计数字段
 `budgets.revision.max_iterations`、`budgets.change.max_iterations`、
-`hard_ceiling.max_iterations` 以及 summary 的 revision/change Apply
+`hard_ceiling.max_iterations`、`budgets.change.max_revisions` 以及 summary 的 revision/change Apply
 used/remaining 输出都已删除；若旧 `loop.json` 仍带这些键，只允许在下一次
 `check`、`plan` 或 `reseal --migrate` 时单向删掉，不能喂给 `apply_remaining`
 或 Apply gate。
@@ -448,7 +448,7 @@ Apply。提高已激活的 ref-local unblock allowance 需要适用 authority �
 stamp 不能给已耗尽 ref 续命。
 
 可选 active minutes 与 breakers 可以暂停实际派出，但 revision/change iteration、
-headcount 或 legacy ceiling 都不能变成调度器。常见 breaker 包括重复 result
+revision count、headcount 或 legacy ceiling 都不能变成调度器。常见 breaker 包括重复 result
 fingerprint、连续 no-progress 和重复 semantic deviation。
 
 legacy `hard_ceiling` 只剩可选的 minutes/self-extension policy data：它不是普通

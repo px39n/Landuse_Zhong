@@ -223,9 +223,11 @@ outcomes, or two repeated semantic deviations trigger a breaker.
 must never be compared with an Apply-count limit. On the next `check`, `plan`,
 or `reseal --migrate`, strip deleted Apply-count fields from legacy loop.json.
 Remove only these keys:
-`budgets.revision.max_iterations`, `budgets.change.max_iterations`, and
-`hard_ceiling.max_iterations`. Treat them as migration residue only: do not copy
-them into `apply_remaining`, an Apply gate reason, or newly written loop state.
+`budgets.revision.max_iterations`, `budgets.change.max_iterations`,
+`hard_ceiling.max_iterations`, and `budgets.change.max_revisions`. Treat them as
+migration residue only: do not copy them into `apply_remaining`, an Apply gate
+reason, or newly written loop state. Revision counts remain summary diagnostics
+and never stop Apply.
 A zero per-ref Apply remainder does not block a pending Verify; the
 kind-specific `gate.decision` remains authoritative.
 

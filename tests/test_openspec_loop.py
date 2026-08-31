@@ -1893,8 +1893,6 @@ def test_reseal_refreshes_narrative_and_refuses_a_semantic_change(tmp_path: Path
         ledger,
         "--scratch-root",
         "test_cache/demo",
-        "--max-revisions",
-        "7",
         "--max-apply-attempts",
         "4",
     )
@@ -1932,12 +1930,13 @@ def test_reseal_migrate_upgrades_a_v2_config_without_losing_policy(tmp_path: Pat
     )
     write_narrative(tmp_path, "demo", "first")
     ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
-    seal_demo(tmp_path, ledger, "--max-revisions", "7", "--max-total-active-minutes", "440")
+    seal_demo(tmp_path, ledger, "--max-total-active-minutes", "440")
 
     loop_path = tmp_path / "openspec" / "changes" / "demo" / "loop.json"
     legacy = read_config(tmp_path)
     legacy["schema_version"] = "openspec-loop.v2"
     legacy["contract_fingerprint"] = "legacy-byte-hash"
+    legacy["budgets"]["change"]["max_revisions"] = 7
     legacy.pop("narrative_digest", None)
     legacy.pop("narrative_policy", None)
     loop_path.write_text(json.dumps(legacy, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -1955,7 +1954,7 @@ def test_reseal_migrate_upgrades_a_v2_config_without_losing_policy(tmp_path: Pat
     config = read_config(tmp_path)
     assert config["schema_version"] == "openspec-loop.v3"
     assert config["narrative_policy"] == "advisory"
-    assert config["budgets"]["change"]["max_revisions"] == 7
+    assert "max_revisions" not in config["budgets"]["change"]
     assert "max_iterations" not in config["budgets"]["change"]
     assert "max_iterations" not in config.get("budgets", {}).get("revision", {})
     assert "max_iterations" not in config.get("hard_ceiling", {})
@@ -1977,8 +1976,6 @@ def test_seal_inherits_prior_policy_and_names_changed_fields(tmp_path: Path) -> 
         ledger,
         "--scratch-root",
         "test_cache/demo",
-        "--max-revisions",
-        "7",
         "--max-apply-attempts",
         "4",
     )
@@ -1992,14 +1989,14 @@ def test_seal_inherits_prior_policy_and_names_changed_fields(tmp_path: Path) -> 
     assert config["retention"] == "thin"
     assert config["paths"]["ledger"] == str(ledger)
     assert config["paths"]["scratch"] == "test_cache/demo"
-    assert config["budgets"]["change"]["max_revisions"] == 7
+    assert "max_revisions" not in config["budgets"]["change"]
     assert config["budgets"]["task"]["max_apply_attempts"] == 4
 
     changed = run_loop(
-        tmp_path, "seal", "demo", "--confirmed", "--max-revisions", "9"
+        tmp_path, "seal", "demo", "--confirmed", "--max-total-active-minutes", "500"
     )
-    assert changed["changed_fields"] == ["budgets.change.max_revisions"]
-    assert read_config(tmp_path)["budgets"]["change"]["max_revisions"] == 9
+    assert changed["changed_fields"] == ["budgets.change.max_active_minutes"]
+    assert read_config(tmp_path)["budgets"]["change"]["max_active_minutes"] == 500
 
 
 def test_first_seal_still_requires_retention_and_ledger_path(tmp_path: Path) -> None:
@@ -2055,7 +2052,7 @@ def write_ledger(path: Path, episodes: list[dict]) -> None:
     )
 
 
-def test_zero_attempt_episodes_do_not_consume_the_change_revision_budget(
+def test_revision_count_is_diagnostic_and_never_gates_apply(
     tmp_path: Path,
 ) -> None:
     write_contract(
@@ -2065,7 +2062,7 @@ def test_zero_attempt_episodes_do_not_consume_the_change_revision_budget(
         base_features([("R1", "1.1", False, False)]),
     )
     ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
-    seal_demo(tmp_path, ledger, "--max-revisions", "1")
+    seal_demo(tmp_path, ledger)
     write_ledger(
         ledger,
         [episode("stale-a", 1), episode("stale-b", 0), episode("stale-c", 0)],
@@ -2109,7 +2106,7 @@ def test_zero_attempt_episodes_do_not_consume_the_change_revision_budget(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
 
-    exhausted = run_loop(
+    still_allowed = run_loop(
         tmp_path,
         "gate",
         "demo",
@@ -2121,9 +2118,9 @@ def test_zero_attempt_episodes_do_not_consume_the_change_revision_budget(
         "apply",
         "--ledger-path",
         str(ledger),
-        expected_exit=2,
     )
-    assert "change_max_revisions_exceeded:1" in exhausted["reasons"]
+    assert still_allowed["decision"] == "continue"
+    assert not any("revision" in reason and "exceeded" in reason for reason in still_allowed["reasons"])
 
 
 def seal_ceiling_demo(tmp_path: Path, *extra: str) -> Path:
@@ -2184,6 +2181,7 @@ def test_deleted_iteration_keys_are_ignored_and_migrated(tmp_path: Path) -> None
     config = read_config(tmp_path)
     config["budgets"]["revision"]["max_iterations"] = 2
     config["budgets"]["change"]["max_iterations"] = 2
+    config["budgets"]["change"]["max_revisions"] = 2
     config.setdefault("hard_ceiling", {})["max_iterations"] = 5
     loop_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     write_ledger(ledger, [episode(fingerprint, 2)])
@@ -2212,6 +2210,7 @@ def test_deleted_iteration_keys_are_ignored_and_migrated(tmp_path: Path) -> None
     cleaned = read_config(tmp_path)
     assert "max_iterations" not in cleaned["budgets"]["revision"]
     assert "max_iterations" not in cleaned["budgets"]["change"]
+    assert "max_revisions" not in cleaned["budgets"]["change"]
     assert "max_iterations" not in cleaned["hard_ceiling"]
 
 
@@ -2266,30 +2265,30 @@ def test_reseal_refuses_a_further_extension_once_self_extensions_are_used(
         tmp_path,
         "reseal",
         "demo",
-        "--set-max-revisions",
-        "4",
+        "--set-max-total-active-minutes",
+        "400",
         "--confirmed",
         "--reason",
         "first extension",
     )
     assert first["self_extensions_used"] == 1
     entry = read_config(tmp_path)["budget_extensions"][0]
-    assert entry["fields"] == ["max_revisions"]
+    assert entry["fields"] == ["max_active_minutes"]
     assert entry["reason"] == "first extension"
 
     exhausted = run_loop(
         tmp_path,
         "reseal",
         "demo",
-        "--set-max-revisions",
-        "5",
+        "--set-max-total-active-minutes",
+        "500",
         "--confirmed",
         "--reason",
         "second extension",
         expected_exit=2,
     )
     assert any("max_self_extensions reached: 1" in issue for issue in exhausted["issues"])
-    assert read_config(tmp_path)["budgets"]["change"]["max_revisions"] == 4
+    assert read_config(tmp_path)["budgets"]["change"]["max_active_minutes"] == 400
 
 
 def test_autonomy_supervised_requires_confirmation_but_full_auto_records_a_reason(
@@ -2301,8 +2300,8 @@ def test_autonomy_supervised_requires_confirmation_but_full_auto_records_a_reaso
         tmp_path,
         "reseal",
         "demo",
-        "--set-max-revisions",
-        "4",
+        "--set-max-total-active-minutes",
+        "400",
         "--reason",
         "self extension",
         expected_exit=2,
@@ -2314,8 +2313,8 @@ def test_autonomy_supervised_requires_confirmation_but_full_auto_records_a_reaso
         tmp_path,
         "reseal",
         "demo",
-        "--set-max-revisions",
-        "4",
+        "--set-max-total-active-minutes",
+        "400",
         "--confirmed",
         expected_exit=2,
     )
@@ -2327,14 +2326,14 @@ def test_autonomy_supervised_requires_confirmation_but_full_auto_records_a_reaso
         tmp_path,
         "reseal",
         "demo",
-        "--set-max-revisions",
-        "4",
+        "--set-max-total-active-minutes",
+        "400",
         "--reason",
         "self extension after design gap",
     )
     assert self_extended["autonomy"] == "full_auto"
     config = read_config(tmp_path)
-    assert config["budgets"]["change"]["max_revisions"] == 4
+    assert config["budgets"]["change"]["max_active_minutes"] == 400
     assert config["budget_extensions"][0]["confirmed"] is False
     assert config["budget_extensions"][0]["autonomy"] == "full_auto"
 
@@ -3900,7 +3899,7 @@ def test_first_seal_scales_change_active_minutes_to_task_count(tmp_path: Path) -
     config = read_config(tmp_path)
     change = config["budgets"]["change"]
     assert change["max_active_minutes"] == 500
-    assert change["max_revisions"] == 3
+    assert "max_revisions" not in change
     assert "max_iterations" not in change
     assert "hard_ceiling" not in config
     assert run_loop(tmp_path, "check", "demo")["ok"] is True

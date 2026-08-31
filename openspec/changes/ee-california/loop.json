@@ -1,10 +1,9 @@
 {
   "schema_version": "openspec-loop.v3",
   "change_id": "ee-california",
-  "contract_fingerprint": "050c14b17ad9377d8e48e61b4da2af2f4fc2f15382e007433a6ed0168f78a72b",
-  "narrative_digest": "4766a73696c7e02a9c9f9edf85ab4173a466b07e33632c959ca81a5271d265af",
+  "contract_fingerprint": "dd07440484cfaaead78a055945f80ae762c88d4f2045da9db2c8ed9e4567565d",
+  "narrative_digest": "ebf8e0b2a4a0b50753aa72440146ff53d7174d0a1fcf028fc633e9c096c6a7d3",
   "narrative_policy": "advisory",
-  "sealed": true,
   "autonomy": "supervised",
   "retention": "thin",
   "paths": {
@@ -25,7 +24,6 @@
       "max_active_minutes": 120
     },
     "change": {
-      "max_revisions": 3,
       "max_active_minutes": 360
     }
   },
@@ -72,7 +70,5 @@
     "promotion": "complete task TEST exactly once before PASS",
     "final": "whole-change verification plus strict OpenSpec validation",
     "audit": "legacy monitor only when retention=full or explicitly required"
-  },
-  "confirmed_at": "2026-08-30T13:59:09Z",
-  "resealed_at": "2026-08-31T06:38:19Z"
+  }
 }

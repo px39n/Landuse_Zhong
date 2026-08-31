@@ -80,7 +80,6 @@ DEFAULT_BUDGETS = {
         "max_active_minutes": 120,
     },
     "change": {
-        "max_revisions": 3,
         "max_active_minutes": 360,
     },
 }
@@ -980,6 +979,7 @@ def sanitize_loop_config(config: dict[str, Any]) -> dict[str, Any]:
         change = budgets.get("change")
         if isinstance(change, dict):
             change.pop("max_iterations", None)
+            change.pop("max_revisions", None)
     hard_ceiling = sanitized.get("hard_ceiling")
     if isinstance(hard_ceiling, dict):
         hard_ceiling.pop("max_iterations", None)
@@ -2532,7 +2532,6 @@ SEAL_BUDGET_ARGS = (
     ("revision", "max_explore_runs", "max_explore_runs"),
     ("revision", "max_subagents", "max_subagents"),
     ("revision", "max_active_minutes", "max_active_minutes"),
-    ("change", "max_revisions", "max_revisions"),
     ("change", "max_active_minutes", "max_total_active_minutes"),
 )
 
@@ -2819,7 +2818,6 @@ def cmd_seal(args: argparse.Namespace) -> int:
 
 
 CHANGE_BUDGET_OVERRIDES = (
-    ("set_max_revisions", "max_revisions"),
     ("set_max_total_active_minutes", "max_active_minutes"),
 )
 
@@ -3819,10 +3817,6 @@ def gate_reasons(
     # the affected ref's unblock latch and cannot stop independent ready refs.
     _ = hard_ceiling
 
-    revision_count = productive_revision_count(ledger)
-    if revision_count > change_budget["max_revisions"]:
-        reasons.append(f"change_max_revisions_exceeded:{change_budget['max_revisions']}")
-
     # Runtime IDs and headcount are observable capacity signals only.  Apply
     # authority is bounded by iteration/minute/breaker and write topology, not
     # by host_soft_cap/max_subagents/distinct-worker counts.
@@ -4072,7 +4066,6 @@ def build_parser() -> argparse.ArgumentParser:
     seal.add_argument("--max-explore-runs", type=int)
     seal.add_argument("--max-subagents", type=int)
     seal.add_argument("--max-active-minutes", type=int)
-    seal.add_argument("--max-revisions", type=int)
     seal.add_argument("--max-total-active-minutes", type=int)
     seal.set_defaults(func=cmd_seal)
 
@@ -4087,7 +4080,6 @@ def build_parser() -> argparse.ArgumentParser:
     reseal.add_argument("--confirmed", action="store_true")
     reseal.add_argument("--narrative-policy", choices=NARRATIVE_POLICIES)
     reseal.add_argument("--reason")
-    reseal.add_argument("--set-max-revisions", type=int)
     reseal.add_argument("--set-max-total-active-minutes", type=int)
     reseal.set_defaults(func=cmd_reseal)
 

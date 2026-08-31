@@ -72,10 +72,11 @@ human confirmation; do not make it a second ceremony.
 For a semantic amendment, preserve each ref's `max_apply_attempts` and dormant
 `max_unblock_runs` unless the amendment explicitly changes that ref's policy.
 `apply_remaining` is the number of selected-wave refs with positive per-ref
-Apply remainder. Deleted Apply-count fields are migration residue only: ignore
-them on read, drop them on the next `check`, `plan`, or `reseal --migrate`,
-and never reintroduce them into written loop state. Optional active-minute or
-breaker advisories may still pause dispatch; raising an activated ref-local
+Apply remainder. Deleted aggregate scheduler fields are migration residue only:
+ignore them on read, drop them on the next `check`, `plan`, or
+`reseal --migrate`, including legacy `budgets.change.max_revisions`, and never
+reintroduce them into written loop state or Apply gating. Optional active-minute
+or breaker advisories may still pause dispatch; raising an activated ref-local
 ceiling remains a separate authority decision.
 
 If a valid `loop.json` exists and its fingerprint still matches, show a
