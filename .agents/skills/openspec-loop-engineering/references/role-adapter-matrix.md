@@ -3,11 +3,14 @@
 Source registry: `canonical-roles.json` (`aili-canonical-roles/v1`, 21 records).
 This table is the local OpenSpec Loop projection. It is authoritative for local
 runtime routing. `general` is never a formal owner and is intentionally absent.
-`rose` is a non-deployable compatibility alias for supervisor-direct work only.
+Upstream canonical `rose` remains a non-deployable provenance/legacy-input row.
+Lowercase `zpy` (display `ZPY`) is the local non-deployable supervisor-direct
+and prompt-validation role ID; it is outside the upstream 21-role namespace.
 
 | Role ID | Local entry | Deployable | Writable scope | Local boundary |
 |---|---|---:|---|---|
-| `rose` | `openspec-loop-engineering` | no | supervisor-only | Direct-only alias; never dispatched or installed as a worker. |
+| `zpy` | `openspec-loop-engineering` | no | supervisor-only | New local direct output; always `agent=null`, zero scheduling headcount, and never authentication authority. |
+| `rose` | `openspec-loop-engineering` | no | supervisor-only | Upstream provenance and explicit legacy/bootstrap input only; never a new inferred local output. |
 | `solution-architect` | `openspec-explore` | conditional | none | Bounded technical options and impact analysis only. |
 | `implementer` | `openspec-apply-change` | yes | task-owned implementation or contract files | One packet = one ref = one supervisor-owned Apply attempt. |
 | `code-scout` | `openspec-explore` | yes | none | Read-only code locality and pattern scouting. |
@@ -34,6 +37,10 @@ runtime routing. `general` is never a formal owner and is intentionally absent.
 - Adapter mappings may narrow tools, actions, commands, and syntax but must not
   widen repository authority, lifecycle ownership, verification selection, or
   final-verdict authority.
+- New permitted direct routes and records emit `zpy`. Explicit `rose` remains
+  readable only for predecessor/history and the bounded bootstrap task.
+- A `zpy` or `rose` label never authenticates a caller, creates authority, or
+  permits native host dispatch; both remain supervisor-direct with `agent=null`.
 - If the selected local entry is unavailable, lacks the needed capability, or
   would overlap another current package, the proactive scan must return a named
   `direct` reason or `blocked`; it must not substitute `general`.

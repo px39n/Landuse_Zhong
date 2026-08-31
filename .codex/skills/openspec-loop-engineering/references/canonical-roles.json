@@ -43,12 +43,15 @@
       "output": "Answer in the user's language. State completed work, evidence, blockers, and `Unverified` limits; ROSE alone may issue the user-facing integration and final verdict.",
       "stop": "Stop and ask one focused decision- or operation-shaped question for unresolved scope, identity, authorization, material product choice, exact risky operation, conflicting rules, missing permission, failed claim-required verification, or unsafe expansion.",
       "local": {
-        "alias_of": "openspec-loop-engineering",
+        "legacy_alias_of": "openspec-loop-engineering",
         "deployable": false,
         "dispatchable": false,
+        "provenance_only": true,
+        "legacy_input": true,
+        "local_output_role_id": "zpy",
         "notes": [
-          "Local compatibility alias only.",
-          "The local Loop supervisor may record effective_role_id=rose for permitted direct work, but it must not dispatch or install rose as a worker."
+          "Upstream canonical ROSE is retained unchanged as GitHub provenance and legacy input.",
+          "New local supervisor-direct routing emits machine role_id=zpy (display ZPY); neither rose nor zpy is dispatched or installed as a worker."
         ]
       }
     },

@@ -28,7 +28,8 @@ Read these plan fields separately:
 
 - `selected_batch`: the complete dependency-ready census
 - `selected_wave`: the complete scan-qualified, write-disjoint ready wave
-- `apply_remaining`: the current actual-dispatch allowance
+- `apply_remaining`: the number of `selected_wave` refs with positive per-ref
+  Apply remainder
 - `allowed_parallel_applies = min(|selected_wave|, apply_remaining)`
 - `dispatch_refs`: the deterministic prefix actually eligible for Apply now
 
@@ -79,8 +80,10 @@ Before routing every non-trivial intent or evidence-created work split, run the
 proactive scan in `references/proactive-delegation-scan.md`. Record the narrowest
 `matched_role_id|null`, one `direct|dispatch|blocked` decision, its named reason,
 and one `effective_role_id`. A permitted direct package uses non-deployable
-`rose` and remains supervisor-owned; the scan itself consumes zero Apply and
-zero scheduling headcount.
+local `zpy` (display `ZPY`) and remains supervisor-owned with `agent=null`;
+explicit `rose` is predecessor/history/bootstrap compatibility only. Neither
+label is authentication authority. The scan itself consumes zero Apply and zero
+scheduling headcount.
 
 A ref enters `selected_wave` only when its package is bounded and non-trivial,
 uses the narrowest applicable Role ID, has a write scope disjoint from packages
@@ -90,8 +93,17 @@ headcount blocker.
 
 `selected_wave` is never truncated by `host_soft_cap`, `max_subagents`, distinct
 worker ids, Role ids, runtime ids, or read-only worker counts. Those values are
-diagnostic only. Apply dispatch is limited only through `dispatch_refs`, the
-existing iteration/minutes/breaker gates, and write topology.
+diagnostic only. Apply dispatch is limited only through `dispatch_refs`, each
+ref's Apply/unblock allowance, optional active-minute and result/semantic
+breakers, and write topology.
+
+`dispatch_refs` may contain both supervisor-direct and spawnable refs. Native
+hosts must derive
+`host_batch_refs = dispatch_refs where routing.decision == dispatch and agent != null`.
+A direct `zpy|rose` ref stays in the supervisor process even when visible in
+`dispatch_refs`; raw membership never makes it spawnable. One wave creates at
+most one native host batch and at most one fresh one-shot packet per
+`host_batch_ref`.
 
 The local writer allowlist in `references/role-adapter-matrix.md` is strict:
 
@@ -116,15 +128,20 @@ Drain the ready queue rather than stopping after one task:
 
 1. Run `plan`; preserve the full `selected_batch`, form `selected_wave`, and
    Apply only `dispatch_refs`.
-2. For each dispatched worker, create one fresh
+2. For each `host_batch_ref`, create one fresh
    `references/subagent-task-packet.md` envelope. One Apply packet binds exactly
-   one ref and one supervisor-owned Apply attempt.
+   one ref and one supervisor-owned Apply attempt. Direct refs create no agent
+   envelope and remain in-process.
 3. Invoke `$openspec-apply-change <change-id> --task <ref> --orchestrated` for
-   each dispatched Apply. A supervisor-direct `rose` package follows the same
-   ref/attempt/write-scope boundary without creating a worker identity.
+   each `dispatch_ref`. A supervisor-direct `zpy` package follows the same
+   ref/attempt/write-scope boundary without creating a worker identity; an
+   explicit legacy `rose` packet is allowed only for predecessor/history or the
+   bounded bootstrap task.
 4. Accept one terminal `references/subagent-result.md` and have the supervisor
    write exactly one authoritative Apply record for that packet/ref/attempt;
-   reject duplicates. The worker never writes the authoritative record.
+   reject duplicates. The worker never writes the authoritative record. Every
+   native host task/thread is fresh and closes at its terminal result; never use
+   `Task.resume`, `resume_agent`, or a continuation recommendation.
 5. Persist and complete the join for every actually dispatched member of the
    shared-worktree wave before starting any member's Verify. A missing, failed,
    partial, blocked, or unverified result blocks Verify only for its own ref
@@ -146,8 +163,10 @@ Drain the ready queue rather than stopping after one task:
    - unblock may return a disposition but never dispatch, swap a worker, or
      replenish an exhausted allowance
 9. On `BLOCKED` or `DEVIATED`, invoke `$openspec-unblock-research <change-id>`
-   when the ref-local gate permits it. Exhaustion marks only that ref
-   `maxed|stop_budget`; unrelated ready refs and later waves remain eligible.
+   in-process with host spawn zero when the ref-local gate permits it. It never
+   resumes the failed Apply or spawns explorer/mapper/verifier/review. Exhaustion
+   marks only that ref `maxed|stop_budget`; unrelated ready refs and later waves
+   remain eligible.
 10. Re-plan after each joined wave and continue independent work. When no ready
    task remains, close at the design level before claiming
    completion: run `goals <change-id>` for the coverage matrix, then
@@ -162,7 +181,9 @@ Zero-Apply actions retain
 their own diagnostic records when useful but never manufacture Apply usage. One
 invocation keeps the same run id across selected refs and retries; an
 intentional resume reuses it, while a genuinely new invocation may create one
-new id. Revision/change budgets still span those run ids.
+new id. Per-ref counters and optional active-minute/breaker state span those run
+ids; deleted aggregate Apply-count keys stay removed and cannot return as
+runtime authority.
 
 ## State semantics
 
@@ -186,10 +207,12 @@ ref `max_apply_attempts=2` and dormant `max_unblock_runs=2`. Unblock allowance
 activates only after that ref becomes `blocked|deviated`; exhausting it marks
 only that ref `maxed|stop_budget`. A stamp cannot replenish it.
 
-Revision/change Apply limits contribute only to `apply_remaining`, which limits
-actual `dispatch_refs` without truncating `selected_wave`. Goal evaluation,
-stop hooks, read-only research/review, supervisor Verify, and `rose` direct
-routing consume zero Apply and zero scheduling headcount.
+`apply_remaining` is the count of refs in `selected_wave` whose recorded Apply
+usage is below that ref's `max_apply_attempts`. Activated `max_unblock_runs`
+remains ref-local and does not replenish Apply attempts. Goal evaluation, stop
+hooks, read-only research/review, supervisor Verify, and `zpy` direct routing
+consume zero Apply and zero scheduling headcount. Explicit legacy `rose` direct
+routing remains zero-headcount compatibility only.
 
 Time means recorded active tool/runtime duration, not time spent waiting for a
 user. Two identical result fingerprints, two consecutive `no_progress`
@@ -197,16 +220,20 @@ outcomes, or two repeated semantic deviations trigger a breaker.
 
 `summary` uses `openspec-loop-summary.v3`. `revision_attempt_count` and
 `change_attempt_count` include Apply, Verify, Explore, and Unblock records; they
-must never be compared with an iteration limit. Read
-`revision_apply_iterations_used|remaining` and
-`change_apply_iterations_used|remaining` for budget status. A zero Apply
-remainder does not block a pending Verify; the kind-specific `gate.decision`
-remains authoritative.
+must never be compared with an Apply-count limit. On the next `check`, `plan`,
+or `reseal --migrate`, strip deleted Apply-count fields from legacy loop.json.
+Remove only these keys:
+`budgets.revision.max_iterations`, `budgets.change.max_iterations`, and
+`hard_ceiling.max_iterations`. Treat them as migration residue only: do not copy
+them into `apply_remaining`, an Apply gate reason, or newly written loop state.
+A zero per-ref Apply remainder does not block a pending Verify; the
+kind-specific `gate.decision` remains authoritative.
 
-Legacy `host_soft_cap`, `max_subagents`, distinct-id counts, and `hard_ceiling`
-remain observable compatibility diagnostics. They do not filter a wave, reduce
-`allowed_parallel_applies`, consume `apply_remaining`, or create an ordinary
-dispatch terminal.
+Legacy `host_soft_cap` and `max_subagents` remain observable compatibility
+diagnostics. Optional `hard_ceiling` may retain only active-minute and
+self-extension policy data. None of them filters a wave, reduces
+`allowed_parallel_applies`, consumes `apply_remaining`, or creates an ordinary
+Apply terminal.
 
 ## Authority
 
@@ -215,15 +242,16 @@ fingerprint with no pending irreversible policy is ordinary dispatch authority;
 `seal-preview.md`, `confirmed_at`, and `seal --confirmed` are not start-work
 gates.
 
-Legacy `hard_ceiling` remains policy compatibility data and is diagnostic for
-ordinary dispatch. Raising it, like changing retention, paths, or scope,
-requires explicit human confirmation; no Loop raises it by itself.
+If present, legacy `hard_ceiling` is optional minutes/self-extension policy data
+only. It does not gate ordinary dispatch and is not ordinary start-work
+authority. Raising that optional policy ceiling still requires explicit human
+confirmation; no Loop raises it by itself.
 
 | action | `supervised` (default) | `full_auto` |
 |---|---|---|
 | raise an activated ref-local unblock ceiling or another recorded budget | explicit user authorization and a reason | supervisor may amend below unchanged irreversible policy with a recorded reason |
 | amend tasks after a design-level gap | pause and hand off to `$openspec-change-interviewer` | amend the registry, regenerate the index, then `reseal --allow-semantic-change --reason` |
-| raise `hard_ceiling`, change retention, paths, or scope | human-confirmed `seal` | human-confirmed `seal` |
+| raise optional `hard_ceiling`, or change retention, paths, or scope | human-confirmed `seal` | human-confirmed `seal` |
 
 Autonomy never widens repository authority. Regardless of mode, destructive
 external writes, credentials, product `--commit` runs, and `git push`, pull
@@ -314,14 +342,17 @@ must match those values.
 During a continuing loop, emit at most one progress line naming the current
 wave/action, then continue with the required tool or skill call. A local
 non-`PASS` blocks only its ref; after the join and disposition, continue other
-eligible refs unless a fingerprint, irreversible-policy, iteration/minutes, or
-breaker gate pauses actual dispatch.
-Consume Apply's NEXT: verify in the same turn; it is not a user handoff.
+eligible refs unless a fingerprint, irreversible-policy, per-ref
+Apply/unblock, optional active-minute, or breaker gate pauses actual dispatch.
+Consume Apply's `NEXT: supervisor_join` in the same turn. Only after the
+applicable join closes may the supervisor select Verify; this is not a user
+handoff.
 
 When the loop stops, report the full ready census, selected wave, actual
 dispatch refs, per-ref action/verifier verdict, applicable budget state, and
 whether any tracked evidence was written. Report legacy `hard_ceiling` or
-headcount fields only as compatibility diagnostics. Name the autonomy mode
-whenever a budget was extended or a contract amended without a human turn.
+headcount fields only as compatibility context when they are present. Name the
+autonomy mode whenever a budget was extended or a contract amended without a
+human turn.
 Never claim promotion unless the checkbox, compact feature state, and
 post-promotion `check` agree.
