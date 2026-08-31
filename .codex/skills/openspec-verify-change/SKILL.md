@@ -26,8 +26,7 @@ only when more than one live candidate remains.
 ## Retention and test tier
 
 Read `loop.json` when present. Do not ask again for cache, D-drive, bundle, or
-GUI paths when its `contract_fingerprint` still matches and no pending
-irreversible policy decision affects the operation.
+GUI paths when the sealed fingerprint still matches.
 
 - Attempt verification: run only owner tests relevant to the latest edit.
 - Promotion verification: execute the selected task's complete `TEST:` block.
@@ -36,7 +35,7 @@ irreversible policy decision affects the operation.
   explicit audit request.
 
 For `none` or `thin`, never fabricate a full `auto_test_openspec` bundle. Use
-the recorded scratch/ledger policy and existing product pointers. If an operation
+the sealed scratch/ledger policy and existing product pointers. If an operation
 requires an unapproved external write or destructive action, return `BLOCKED`.
 
 ## Task-mode scope
@@ -52,26 +51,6 @@ Assess:
 2. Correctness against `ACCEPT:` and referenced scenarios.
 3. Coherence with active design decisions and repository patterns.
 4. Product semantics: source, target, metric, schema, and research direction.
-
-## Supervisor authority and wave join
-
-Task-mode Verify is a read-only lifecycle authority of the sole Loop
-supervisor. It consumes zero Apply and zero scheduling headcount. A worker
-terminal result, owner check, or self-reported completion is input evidence; it
-cannot write the authoritative Apply record, run Verify, promote, or declare
-PASS.
-
-In a shared worktree, start Verify for a ref only after every actually
-dispatched member of its current wave has joined and that ref's own Apply result
-is `completed` with inspectable evidence. Do not wait for later waves, unrelated
-exploration, or read-only review. After the barrier, a missing, failed, partial,
-blocked, or unverified sibling blocks only its own ref; it does not turn a
-completed sibling into failure.
-
-`silent-failure-hunting` and `review-pipeline` are bounded advisory hosts. Their
-read-only findings may inform inspection, but they do not replace the task
-`TEST:`, the supervisor verdict, promotion, or PASS, and they do not authorize
-retry or redispatch.
 
 ## Verdicts
 

@@ -77,6 +77,8 @@ conflict and make the next probe target that conflict.
 
 When called by `$openspec-loop-engineering`:
 
+- the sole supervisor invokes this skill in-process; unblock host spawn count is
+  zero and this skill is not a third subordinate host or worker lane
 - default sink is `return_only`
 - at most two unblock runs per ref in one active fingerprint revision
 - the first is a repair decision; a second requires a completed second Apply
@@ -86,6 +88,9 @@ When called by `$openspec-loop-engineering`:
 - at most 4 tool calls, 4 evidence items, and 180 seconds
 - stop after one primary path and one fallback
 - do not implement the fix or widen into general literature review
+- do not resume the failed Apply task/thread, call `Task.resume` or
+  `resume_agent`, spawn explorer/mapper/verifier/review, swap workers, or let a
+  worker call Loop gate/record
 
 Persist a report only when it changes task direction, creates a durable
 blocker, supersedes a task, or the user explicitly asks for audit evidence.
@@ -101,11 +106,27 @@ blocker, supersedes a task, or the user explicitly asks for audit evidence.
 - `stop_budget`: remaining uncertainty cannot be reduced within the recorded
   ref-local budget or authority
 
+Host coupling is fixed:
+
+- `retry` is advisory. Only the supervisor may pass the ordinary gate and open
+  a fresh Apply packet when that ref still has positive Apply remainder; the
+  failed packet/thread remains terminal and is never resumed.
+- `targeted_probe` runs one probe in-process by default. A single read-only
+  spawn is allowed only when a concrete wall-clock benefit is recorded on the
+  scan row; it joins immediately, consumes zero Apply, and never starts Verify.
+- `amend_spec|supersede_task` returns to interviewer or the authorized sole-
+  supervisor semantic-restamp path with spawn zero and counters preserved.
+- `stop_budget` stops only the affected ref. It does not freeze siblings or buy
+  a third research agent.
+
 An explicitly authorized ref-local `max_apply_attempts>=3` may permit the second
 unblock to return `retry` or `targeted_probe` for a third Apply. The disposition
 is advisory only: unblock never dispatches, swaps a worker, changes a packet,
 or replenishes an Apply/unblock allowance. A repeated or missing result
 fingerprint without new evidence cannot enter the second unblock.
+
+The second unblock never starts a research swarm. Under the default two-Apply
+allowance it remains terminal adjudication only, as defined above.
 
 `amend_spec` and `supersede_task` pause Loop and return to
 `$openspec-change-interviewer`. Under `full_auto`, only the sole supervisor may

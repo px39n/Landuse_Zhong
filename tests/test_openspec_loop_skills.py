@@ -83,11 +83,6 @@ def read_skill(name: str) -> str:
     return (CANONICAL_ROOT / name / "SKILL.md").read_text(encoding="utf-8")
 
 
-def normalized(text: str) -> str:
-    """Make prose assertions insensitive to wrapping and repeated whitespace."""
-    return " ".join(text.split())
-
-
 def test_agents_is_the_byte_exact_semantic_source() -> None:
     for name in SKILL_NAMES:
         expected = canonical_files(name)
@@ -160,24 +155,20 @@ def test_skills_have_valid_minimal_frontmatter() -> None:
         assert "compatibility:" not in frontmatter
 
 
-def test_fingerprint_latch_and_ref_local_budget_contract_is_explicit() -> None:
+def test_loop_lifecycle_and_budget_contract_is_explicit() -> None:
     loop = read_skill("openspec-loop-engineering")
     interview = read_skill("openspec-change-interviewer")
     verify = read_skill("openspec-verify-change")
     unblock = read_skill("openspec-unblock-research")
-    flowed = normalized(loop)
 
-    assert "missing or unsealed `loop.json`" not in loop
-    assert "When `loop.json` is missing, `check`/`plan` initialize" in flowed
-    assert "recorded `thin` defaults" in flowed
-    assert "current `contract_fingerprint`" in flowed
-    assert "pending_irreversible_policy" in loop
-    assert "`selected_batch`" in loop
-    assert "`selected_wave`" in loop
-    assert "`dispatch_refs`" in loop
+    normalized = " ".join(loop.split())
+    assert "matching fingerprint with no pending irreversible policy" in normalized
+    assert "Missing-loop initialization" in loop
     assert "pending | ready | in_progress | blocked | deviated | maxed |" in loop
     assert "max_apply_attempts=2" in loop
     assert "max_unblock_runs=2" in loop
+    assert "positive per-ref Apply remainder" in normalized
+    assert "Revision/change Apply limits contribute only to `apply_remaining`" not in loop
     assert "8 apply iterations" not in loop
     assert "20 apply iterations" not in loop
     assert "fingerprint drift" in loop
@@ -194,11 +185,47 @@ def test_fingerprint_latch_and_ref_local_budget_contract_is_explicit() -> None:
     assert "retry|targeted_probe|amend_spec|supersede_task|stop_budget" in unblock
     assert "the second is a terminal adjudication" in unblock
     assert "different failure fingerprint or new discriminating evidence" in unblock
-    assert "revision_apply_iterations_used|remaining" in loop
-    assert "change_apply_iterations_used|remaining" in loop
+    assert "revision_apply_iterations_used|remaining" not in loop
+    assert "change_apply_iterations_used|remaining" not in loop
+    assert "budgets.revision.max_iterations" in loop
+    assert "budgets.change.max_iterations" in loop
+    assert "hard_ceiling.max_iterations" in loop
+    assert "migration residue only" in normalized
+    assert "historical diagnostics" not in normalized
 
 
-def test_fingerprint_ready_seal_preview_is_optional_and_change_scoped() -> None:
+def test_unblock_host_policy_is_in_process_and_ref_local() -> None:
+    unblock = read_skill("openspec-unblock-research")
+    normalized = " ".join(unblock.split())
+
+    assert "sole supervisor invokes this skill in-process" in normalized
+    assert "unblock host spawn count is zero" in normalized
+    assert "not a third subordinate host or worker lane" in normalized
+    assert "do not resume the failed Apply task/thread" in normalized
+    assert "Task.resume" in unblock
+    assert "resume_agent" in unblock
+    assert "spawn explorer/mapper/verifier/review" in normalized
+    assert "worker call Loop gate/record" in normalized
+
+    assert "Only the supervisor may pass the ordinary gate" in normalized
+    assert "open a fresh Apply packet" in normalized
+    assert "targeted_probe` runs one probe in-process by default" in normalized
+    assert "single read-only spawn" in normalized
+    assert "wall-clock benefit is recorded on the scan row" in normalized
+    assert "joins immediately" in normalized
+    assert "never starts Verify" in normalized
+    assert "semantic-restamp path with spawn zero" in normalized
+    assert "stops only the affected ref" in normalized
+    assert "does not freeze siblings or buy a third research agent" in normalized
+    assert "second unblock never starts a research swarm" in normalized
+
+    assert "at most 4 tool calls, 4 evidence items, and 180 seconds" in normalized
+    assert "at most two unblock runs per ref" in normalized
+    assert "amend_spec|supersede_task|stop_budget" in unblock
+    assert "Persist a report only when it changes task direction" in unblock
+
+
+def test_seal_preview_is_change_scoped_and_not_yearbook_template() -> None:
     interview = read_skill("openspec-change-interviewer")
     preview = (
         CANONICAL_ROOT
@@ -215,19 +242,11 @@ def test_fingerprint_ready_seal_preview_is_optional_and_change_scoped() -> None:
     guide = (REPO_ROOT / "docs" / "openspec-loop-engineering.md").read_text(
         encoding="utf-8"
     )
-    interview_flowed = normalized(interview)
-    preview_flowed = normalized(preview)
-    placement_flowed = normalized(placement)
 
     assert "seal-preview.md" in interview
+    assert "optional audit" in interview.lower()
     assert "Only after acceptance" not in interview
-    assert "matching `contract_fingerprint`" in interview_flowed
-    assert "optional audit diagnostic" in interview_flowed
-    assert "not ordinary start-work gates" in interview_flowed
-    assert "一次性全盖" in interview or "every active" in interview.lower()
-    assert "optional audit diagnostic" in preview_flowed.lower()
-    assert "not a start-work gate" in preview_flowed
-    assert "Ordinary Apply/dispatch does not require" in preview_flowed
+    assert "neither ordinary start-work authority" in " ".join(placement.split())
     assert "path profile" in preview.lower()
     assert "A_local_thin" in preview
     assert "B_external_heavy" in preview
@@ -240,13 +259,10 @@ def test_fingerprint_ready_seal_preview_is_optional_and_change_scoped() -> None:
     assert "active_ref_count * max_apply_attempts" not in preview
     assert "is not a `check` warning" in " ".join(interview.split())
     assert "path profile" in placement.lower()
-    assert "before first seal" not in placement_flowed.lower()
-    assert "optional" in placement_flowed.lower()
     assert "seal-preview" in guide
-    assert "fingerprint" in guide
-    assert "可选" in guide
     assert "change-id" in guide
     assert "A_local_thin" in guide
+    assert "change-scoped 可选审计诊断" in guide
 
 
 def test_two_drift_classes_are_documented_with_distinct_recoveries() -> None:
@@ -270,101 +286,74 @@ def test_two_drift_classes_are_documented_with_distinct_recoveries() -> None:
     assert "勾选 checkbox 不是漂移" in guide
 
 
-def test_supervisor_authority_bounds_irreversible_policy_without_dispatch_ceiling() -> None:
+def test_one_authority_model_keeps_apply_count_ref_local() -> None:
     loop = read_skill("openspec-loop-engineering")
-    apply = read_skill("openspec-apply-change")
-    verify = read_skill("openspec-verify-change")
     interview = read_skill("openspec-change-interviewer")
     guide = (REPO_ROOT / "docs" / "openspec-loop-engineering.md").read_text(
         encoding="utf-8"
     )
-    flowed = normalized(loop)
-    apply_flowed = normalized(apply)
-    verify_flowed = normalized(verify)
 
-    assert "`hard_ceiling` is the only stop that no Loop may raise" not in loop
-    assert "matching sealed `loop.json`" not in apply
-    assert "sealed fingerprint" not in verify
-    assert "matching fingerprint with no pending irreversible policy" in flowed
-    assert "Legacy `hard_ceiling` remains policy compatibility data" in flowed
-    assert "requires explicit human confirmation" in flowed
+    normalized = " ".join(loop.split())
+    assert "Optional `hard_ceiling` may retain only active-minute" in normalized
+    assert "does not gate ordinary dispatch" in normalized
+    assert "Raising that optional policy ceiling still requires explicit human" in normalized
+    assert "max_apply_attempts=2" in loop
+    assert "max_unblock_runs=2" in loop
+    assert "Revision/change Apply limits contribute only to `apply_remaining`" not in loop
     assert "supervised" in loop and "full_auto" in loop
     assert "stay human-authorized under `AGENTS.md`" in loop
-    assert "contract_fingerprint" in apply
-    assert "packet" in apply_flowed
-    assert "supervisor" in apply_flowed
-    assert "contract_fingerprint" in verify
-    assert "supervisor" in verify_flowed
     assert "hard_ceiling" in interview
-    assert "autonomy: supervised" in interview
-    assert "autonomy: full_auto" in interview
-    assert "唯一任何 Loop 都无权提高的停止条件" not in guide
-    assert "不可逆" in guide
+    assert "Ref-local Apply/unblock exhaustion is local" in interview
+    assert "summary 的 revision/change Apply" in guide
+    assert "used/remaining 输出都已删除" in guide
+    assert "Apply 次数权威只有各 ref" in guide
     assert "autonomy 不扩大仓库权限" in guide
+    assert "唯一任何 Loop 都无权提高的停止条件" not in guide
 
 
-def test_selected_wave_apply_identity_join_and_atomic_promotion() -> None:
+def test_the_loop_drains_the_ready_queue_and_promotes_atomically() -> None:
     loop = read_skill("openspec-loop-engineering")
-    apply = read_skill("openspec-apply-change")
-    verify = read_skill("openspec-verify-change")
-    flowed = normalized(loop)
-    apply_flowed = normalized(apply)
-    verify_flowed = normalized(verify)
+    normalized = " ".join(loop.split())
 
-    assert "Drain the ready queue rather than stopping after one task" in flowed
+    assert "Drain the ready queue rather than stopping after one task:" in normalized
     assert "For the first ready task only" not in loop
-    assert "preserve the full `selected_batch`" in flowed
-    assert "form `selected_wave`" in flowed
-    assert "Apply only `dispatch_refs`" in flowed
-    assert "One Apply packet binds exactly one ref" in flowed
-    assert "one supervisor-owned Apply attempt" in flowed
-    assert "exactly one authoritative Apply record" in flowed
-    assert "complete the join for every actually dispatched member" in flowed
-    assert "before starting any member's Verify" in flowed
-    assert "matching sealed `loop.json`" not in apply
-    assert "sealed fingerprint" not in verify
-    assert "contract_fingerprint" in apply_flowed
-    assert "exactly one ref" in apply_flowed
-    assert "supervisor-owned Apply attempt" in apply_flowed
-    assert "authoritative Apply record" in apply_flowed
-    assert "join" in apply_flowed
-    assert "contract_fingerprint" in verify_flowed
-    assert "zero Apply" in verify_flowed
-    assert "zero scheduling headcount" in verify_flowed
-    assert "join" in verify_flowed
+    assert "write scope disjoint from packages already admitted" in normalized
     for command in ("promote", "sync", "goals", "design-verify", "apply-revision"):
         assert f"python scripts/openspec_loop.py {command}" in loop
+    flowed = " ".join(loop.split())
     assert "Never hand-edit the checkbox" in flowed
     assert "requires a recorded supervisor verifier pass for that ref" in flowed
 
 
-def test_subordinate_host_and_authority_same_turn_execution_latch() -> None:
+def test_loop_same_turn_execution_latch() -> None:
     loop = read_skill("openspec-loop-engineering")
     apply = read_skill("openspec-apply-change")
     guide = (REPO_ROOT / "docs" / "openspec-loop-engineering.md").read_text(
         encoding="utf-8"
     )
-    flowed = normalized(loop)
-    apply_flowed = normalized(apply)
 
+    normalized = " ".join(loop.split())
     for phrase in (
         "next substantive action in the same turn must be Apply",
         "Do not end with a summary, suggestion, or handoff",
+        "A permitted direct package uses non-deployable local `zpy` (display `ZPY`) and remains supervisor-owned",
+        "A worker may Apply only its packet; it must not Verify, promote",
         "One invocation uses one `run_id`",
         "must not create `BUNDLE`, `EVIDENCE`, `progress.txt`, `runs.log`",
     ):
-        assert phrase in flowed
-    assert "A worker may Apply only its packet" in flowed
-    assert "must not Verify, promote, toggle a checkbox, write the ledger, or claim PASS" in flowed
-    assert "The supervisor may call only these two subordinate hosts" in flowed
-    assert "`silent-failure-hunting`" in loop
-    assert "`review-pipeline`" in loop
-    assert "another supervisor" in loop
+        assert phrase in normalized
     assert "exact next command" not in loop
-    assert "NEXT: $openspec-verify-change" in apply
-    assert "not a user handoff" in apply_flowed
+    normalized_apply = " ".join(apply.split())
+    assert "NEXT: supervisor_join" in apply
+    assert "NEXT: $openspec-verify-change" not in apply
+    assert "not a user handoff" in normalized_apply
     assert "同回合" in guide
     assert "先做后说" in guide
+    normalized_guide = " ".join(guide.split())
+    assert (
+        "`gate` 对 `dispatch_refs` 返回 `continue` 后，同回合下一项 "
+        "substantive action 必须是 Apply"
+    ) in normalized_guide
 
 
 def test_design_level_closing_is_documented_across_skills_and_guide() -> None:
@@ -374,7 +363,6 @@ def test_design_level_closing_is_documented_across_skills_and_guide() -> None:
     guide = (REPO_ROOT / "docs" / "openspec-loop-engineering.md").read_text(
         encoding="utf-8"
     )
-    guide_flowed = normalized(guide)
 
     assert "close at the design level before claiming" in loop
     assert "## Design-level closing" in verify
@@ -382,9 +370,8 @@ def test_design_level_closing_is_documented_across_skills_and_guide() -> None:
     assert "`unobserved`, which is a `GAP`, not a" in verify
     assert "GOAL G1:" in interview
     assert "COVERED_BY:" in interview
-    assert "无 ready task 也不等于 design 已实现" in guide_flowed
-    assert "缺 observation 是 `unobserved`，不能 PASS" in guide_flowed
-    assert "只有 design PASS 后才运行 whole-change Verify" in guide_flowed
+    assert "没有 ready task **不等于** design 已经实现" in " ".join(guide.split())
+    assert "autonomy 不得制造空合同" in guide
 
 
 def test_feature_registry_is_compact_and_monitor_is_audit_only() -> None:
@@ -461,6 +448,44 @@ def test_docs_and_governance_point_to_the_public_guide() -> None:
     assert "docs/openspec-loop-engineering.md" in project
     assert "retention=full" in agents
     assert "retention=full" in project
+
+
+def test_public_guide_has_atomic_harness_graph_and_tool_flow() -> None:
+    guide = (REPO_ROOT / "docs" / "openspec-loop-engineering.md").read_text(
+        encoding="utf-8"
+    )
+    normalized = " ".join(guide.split())
+
+    assert "### 1.1 `e2e-host` 原子对齐索引" in guide
+    assert "### 2.3 Harness graph：workflow、skill 与 host tool 流" in guide
+    assert "### 2.4 Skill → tool → artifact 原子调用表" in guide
+    assert "```mermaid" in guide
+    assert "flowchart TD" in guide
+    assert "纯文本等价流" in guide
+
+    for phrase in (
+        "loop.json.paths.ledger",
+        "test_cache/<change-id>/loop/ledger.json",
+        "interview.md",
+        "host_batch_refs = dispatch_refs where routing.decision == dispatch and agent != null",
+        "NEXT: supervisor_join",
+        "Task.resume",
+        "resume_agent",
+        "shared_context_bytes + Σpacket_delta_bytes + Σresult_bytes",
+        "record(apply|unblock)",
+        "return_only",
+        "最多 4 tool calls、4 evidence items、180s",
+        "the registry declares no design goal",
+        "uncovered_goals=[]",
+        "orphan_refs=[]",
+        "Autopilot 最后接管",
+    ):
+        assert phrase in normalized
+
+    assert "helper 并没有额外的 host-batch runtime object" in normalized
+    assert "worker/host 不写它" in guide
+    assert "python scripts/openspec_loop.py record <change-id>" in guide
+    assert "python scripts/openspec_loop.py design-verify <change-id> --observation" in guide
 
 
 def test_touched_text_is_utf8_clean() -> None:

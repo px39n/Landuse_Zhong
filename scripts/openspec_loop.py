@@ -18,13 +18,11 @@ LEGACY_SCHEMA_LOOP = "openspec-loop.v2"
 NARRATIVE_POLICIES = ("advisory", "strict")
 AUTONOMY_MODES = ("supervised", "full_auto")
 DEFAULT_HARD_CEILING = {
-    "max_iterations": 60,
     "max_active_minutes": 1080,
     "max_self_extensions": 3,
 }
 # Ceiling key -> the change budget it is allowed to bound.
 HARD_CEILING_BUDGET_LINKS = (
-    ("max_iterations", "max_iterations"),
     ("max_active_minutes", "max_active_minutes"),
 )
 SCHEMA_PLAN = "openspec-loop-plan.v2"
@@ -77,14 +75,12 @@ PAUSED_STATES = {"blocked", "deviated", "in_progress"}
 DEFAULT_BUDGETS = {
     "task": {"max_apply_attempts": 2, "max_unblock_runs": 2},
     "revision": {
-        "max_iterations": 8,
         "max_explore_runs": 1,
         "max_subagents": 2,
         "max_active_minutes": 120,
     },
     "change": {
         "max_revisions": 3,
-        "max_iterations": 20,
         "max_active_minutes": 360,
     },
 }
@@ -936,31 +932,12 @@ def hard_ceiling_of(config: dict[str, Any] | None) -> dict[str, int] | None:
     raw = config.get("hard_ceiling") if isinstance(config, dict) else None
     if not isinstance(raw, dict):
         return None
-    ceiling = DEFAULT_HARD_CEILING.copy()
-    for key in ceiling:
+    ceiling: dict[str, int] = {}
+    for key in DEFAULT_HARD_CEILING:
         value = raw.get(key)
         if isinstance(value, int) and not isinstance(value, bool) and value > 0:
             ceiling[key] = value
-    return ceiling
-
-
-def derive_hard_ceiling(change_budget: dict[str, int]) -> dict[str, int]:
-    """Bound self-extension without making the operator compute the bound.
-
-    The ceiling only has to sit above the budget it guards, so a first seal can
-    stay silent about it and still gain a stop that no later `reseal` can raise.
-    """
-    return {
-        "max_iterations": max(
-            DEFAULT_HARD_CEILING["max_iterations"],
-            3 * int(change_budget.get("max_iterations", 0) or 0),
-        ),
-        "max_active_minutes": max(
-            DEFAULT_HARD_CEILING["max_active_minutes"],
-            3 * int(change_budget.get("max_active_minutes", 0) or 0),
-        ),
-        "max_self_extensions": DEFAULT_HARD_CEILING["max_self_extensions"],
-    }
+    return ceiling or None
 
 
 def self_extensions_used(config: dict[str, Any] | None) -> int:
@@ -986,18 +963,46 @@ def load_loop_config(repo_root: Path, change_id: str) -> dict[str, Any] | None:
     payload = json.loads(read_utf8(path))
     if not isinstance(payload, dict):
         raise ValueError("loop.json must be a JSON object")
-    return payload
+    return sanitize_loop_config(payload)
+
+
+def sanitize_loop_config(config: dict[str, Any]) -> dict[str, Any]:
+    sanitized = json.loads(json.dumps(config, ensure_ascii=False))
+    budgets = sanitized.get("budgets")
+    if isinstance(budgets, dict):
+        revision = budgets.get("revision")
+        if isinstance(revision, dict):
+            revision.pop("max_iterations", None)
+        change = budgets.get("change")
+        if isinstance(change, dict):
+            change.pop("max_iterations", None)
+    hard_ceiling = sanitized.get("hard_ceiling")
+    if isinstance(hard_ceiling, dict):
+        hard_ceiling.pop("max_iterations", None)
+        if not hard_ceiling:
+            sanitized.pop("hard_ceiling", None)
+    return sanitized
+
+
+def maybe_persist_sanitized_loop_config(
+    repo_root: Path,
+    change_id: str,
+    original: dict[str, Any] | None,
+    sanitized: dict[str, Any] | None,
+) -> None:
+    if original is None or sanitized is None:
+        return
+    if original == sanitized:
+        return
+    write_json_atomic(loop_config_path(repo_root, change_id), sanitized)
 
 
 def hard_ceiling_issues(config: dict[str, Any]) -> list[str]:
     ceiling = config.get("hard_ceiling")
     if not isinstance(ceiling, dict):
-        return ["loop.json hard_ceiling is required"]
+        return []
 
     issues: list[str] = []
-    missing = sorted(set(DEFAULT_HARD_CEILING) - set(ceiling))
-    if missing:
-        issues.append("loop.json hard_ceiling missing: " + ", ".join(missing))
     invalid = sorted(
         key
         for key in set(DEFAULT_HARD_CEILING) & set(ceiling)
@@ -1009,7 +1014,6 @@ def hard_ceiling_issues(config: dict[str, Any]) -> list[str]:
         issues.append(
             "loop.json hard_ceiling must be positive integers: " + ", ".join(invalid)
         )
-
     budgets = config.get("budgets")
     change_budget = budgets.get("change") if isinstance(budgets, dict) else None
     if isinstance(change_budget, dict):
@@ -1124,23 +1128,6 @@ def loop_config_issues(config: dict[str, Any] | None, change_id: str) -> list[st
     return issues
 
 
-def scaled_change_defaults(task_count: int) -> dict[str, int]:
-    """Admit a clean first pass over the registry that is actually present.
-
-    A flat default made a large change start over budget, which guaranteed the
-    extension round trip the Loop exists to avoid.
-    """
-    defaults = DEFAULT_BUDGETS["change"]
-    return {
-        "max_revisions": defaults["max_revisions"],
-        "max_iterations": max(
-            defaults["max_iterations"],
-            DEFAULT_BUDGETS["task"]["max_apply_attempts"] * task_count,
-        ),
-        "max_active_minutes": max(defaults["max_active_minutes"], 10 * task_count),
-    }
-
-
 def merge_budget_defaults(raw: Any) -> dict[str, dict[str, int]]:
     merged = {scope: values.copy() for scope, values in DEFAULT_BUDGETS.items()}
     if not isinstance(raw, dict):
@@ -1224,7 +1211,11 @@ def initialize_thin_loop_config(
 ) -> dict[str, Any]:
     retention_profile = recorded_retention_profile(repo_root, change_id)
     budgets = merge_budget_defaults(None)
-    budgets["change"] = scaled_change_defaults(len(tasks))
+    change_defaults = budgets["change"].copy()
+    change_defaults["max_active_minutes"] = max(
+        change_defaults["max_active_minutes"], 10 * len(tasks)
+    )
+    budgets["change"] = change_defaults
     config = {
         "schema_version": SCHEMA_LOOP,
         "change_id": change_id,
@@ -1479,6 +1470,12 @@ DEPLOYABLE_ROLE_IDS = {
     "doc-researcher",
     "spec-miner",
 }
+LOCAL_SUPERVISOR_ROLE_ID = "zpy"
+LEGACY_SUPERVISOR_ROLE_ID = "rose"
+SUPERVISOR_DIRECT_ROLE_IDS = {
+    LOCAL_SUPERVISOR_ROLE_ID,
+    LEGACY_SUPERVISOR_ROLE_ID,
+}
 EVIDENCE_WRITER_ROLE_IDS = {"browser-qa-runner", "e2e-artifact-runner"}
 READ_ONLY_ROLE_IDS = {
     "solution-architect",
@@ -1575,7 +1572,7 @@ def normalize_join_id(task: TaskEntry, *, change_id: str, fingerprint: str) -> s
 def write_policy_for_role(role_id: str | None) -> dict[str, Any]:
     if not role_id:
         return {"mode": "read_only", "roots": []}
-    if role_id == "rose":
+    if role_id in SUPERVISOR_DIRECT_ROLE_IDS:
         return {"mode": "supervisor_direct", "roots": []}
     return ROLE_WRITE_POLICIES.get(role_id, {"mode": "read_only", "roots": []})
 
@@ -1622,11 +1619,14 @@ def route_ready_wave(
         elif matched_role is None:
             decision = "direct"
             direct_reason = role_fit_reason
-            effective_role = "rose"
-        elif matched_role == "rose":
+            effective_role = LOCAL_SUPERVISOR_ROLE_ID
+        elif matched_role in SUPERVISOR_DIRECT_ROLE_IDS:
             decision = "direct"
             direct_reason = "no_matching_specialist"
-            effective_role = "rose"
+            # Preserve an explicit legacy `rose` packet long enough to record
+            # the bootstrap attempt that introduces local `zpy` support. New
+            # inferred direct work uses `zpy` above.
+            effective_role = matched_role
         elif matched_role in DEPLOYABLE_ROLE_IDS | READ_ONLY_ROLE_IDS:
             decision = "dispatch"
             direct_reason = "N/A"
@@ -1645,7 +1645,7 @@ def route_ready_wave(
         if decision != "blocked" and not disjoint:
             decision = "direct"
             direct_reason = "overlap"
-            effective_role = "rose"
+            effective_role = LOCAL_SUPERVISOR_ROLE_ID
             blockers.append("write_scope_overlap")
         elif not disjoint:
             blockers.append("write_scope_overlap")
@@ -1720,31 +1720,18 @@ def apply_budget_snapshot(
     change_id: str,
     config: dict[str, Any],
     fingerprint: str,
+    tasks: list[TaskEntry],
+    selected_wave: list[str],
 ) -> dict[str, int]:
-    budgets = merge_budget_defaults(config.get("budgets"))
-    ledger_path = configured_ledger_path(repo_root, config, None)
-    ledger = load_or_init_ledger(ledger_path, change_id)
-    episode = next(
-        (
-            item
-            for item in ledger.get("episodes", [])
-            if item.get("contract_fingerprint") == fingerprint
-        ),
-        None,
+    tasks_by_ref = {task.ref: task for task in tasks}
+    apply_remaining = sum(
+        1
+        for ref in selected_wave
+        if (task := tasks_by_ref.get(ref)) is not None
+        and task.max_apply_attempts is not None
+        and task.apply_attempts_used < task.max_apply_attempts
     )
-    revision_used = apply_iteration_count(attempts_for_episode(episode)) if episode else 0
-    change_used = apply_iteration_count(attempts_for_change(ledger))
-    revision_remaining = max(
-        budgets["revision"]["max_iterations"] - revision_used, 0
-    )
-    change_remaining = max(budgets["change"]["max_iterations"] - change_used, 0)
-    return {
-        "revision_apply_used": revision_used,
-        "change_apply_used": change_used,
-        "revision_apply_remaining": revision_remaining,
-        "change_apply_remaining": change_remaining,
-        "apply_remaining": min(revision_remaining, change_remaining),
-    }
+    return {"apply_remaining": apply_remaining}
 
 
 def apply_runtime_budget_state(
@@ -1843,7 +1830,14 @@ def build_plan_payload(
         contract_issues = build_dependency_graph(tasks, features)
         fingerprint = compute_semantic_fingerprint(repo_root, change_id)
         narrative_digest = compute_narrative_digest(repo_root, change_id)
-        config = load_loop_config(repo_root, change_id)
+        loop_path = loop_config_path(repo_root, change_id)
+        raw_config = None
+        if loop_path.exists():
+            raw_config = json.loads(read_utf8(loop_path))
+            if not isinstance(raw_config, dict):
+                raise ValueError("loop.json must be a JSON object")
+        config = sanitize_loop_config(raw_config) if raw_config is not None else None
+        maybe_persist_sanitized_loop_config(repo_root, change_id, raw_config, config)
         if config is None and not advisory and tasks:
             config = initialize_thin_loop_config(
                 repo_root,
@@ -1926,19 +1920,27 @@ def build_plan_payload(
             if route["wave_status"] == "selected":
                 route["wave_status"] = "latch_blocked"
     budget_snapshot = (
-        apply_budget_snapshot(repo_root, change_id, config, fingerprint)
+        apply_budget_snapshot(
+            repo_root,
+            change_id,
+            config,
+            fingerprint,
+            tasks,
+            selected_wave,
+        )
         if config is not None
-        else {
-            "revision_apply_used": 0,
-            "change_apply_used": 0,
-            "revision_apply_remaining": 0,
-            "change_apply_remaining": 0,
-            "apply_remaining": 0,
-        }
+        else {"apply_remaining": 0}
     )
     apply_remaining = budget_snapshot["apply_remaining"]
     allowed_parallel_applies = min(len(selected_wave), apply_remaining)
-    dispatch_refs = selected_wave[:allowed_parallel_applies]
+    tasks_by_ref = {task.ref: task for task in tasks}
+    dispatch_refs = [
+        ref
+        for ref in selected_wave
+        if (task := tasks_by_ref.get(ref)) is not None
+        and task.max_apply_attempts is not None
+        and task.apply_attempts_used < task.max_apply_attempts
+    ][:allowed_parallel_applies]
     return {
         "schema_version": SCHEMA_PLAN,
         "change_id": change_id,
@@ -2517,19 +2519,16 @@ SEAL_PATH_ARGS = (
     ("gui_colab", "gui_colab_root"),
 )
 SEAL_CEILING_ARGS = (
-    ("max_iterations", "hard_ceiling_max_iterations"),
     ("max_active_minutes", "hard_ceiling_max_active_minutes"),
     ("max_self_extensions", "hard_ceiling_max_self_extensions"),
 )
 SEAL_BUDGET_ARGS = (
     ("task", "max_apply_attempts", "max_apply_attempts"),
     ("task", "max_unblock_runs", "max_unblock_runs"),
-    ("revision", "max_iterations", "max_iterations"),
     ("revision", "max_explore_runs", "max_explore_runs"),
     ("revision", "max_subagents", "max_subagents"),
     ("revision", "max_active_minutes", "max_active_minutes"),
     ("change", "max_revisions", "max_revisions"),
-    ("change", "max_iterations", "max_total_iterations"),
     ("change", "max_active_minutes", "max_total_active_minutes"),
 )
 
@@ -2556,8 +2555,11 @@ def seal_changed_fields(prior: dict[str, Any], config: dict[str, Any]) -> list[s
     prior_ceiling = (
         prior.get("hard_ceiling") if isinstance(prior.get("hard_ceiling"), dict) else {}
     )
+    config_ceiling = (
+        config.get("hard_ceiling") if isinstance(config.get("hard_ceiling"), dict) else {}
+    )
     for key, _ in SEAL_CEILING_ARGS:
-        if prior_ceiling.get(key) != config["hard_ceiling"][key]:
+        if prior_ceiling.get(key) != config_ceiling.get(key):
             changed.append(f"hard_ceiling.{key}")
     prior_paths = prior.get("paths") if isinstance(prior.get("paths"), dict) else {}
     for key, _ in SEAL_PATH_ARGS:
@@ -2575,65 +2577,6 @@ def seal_changed_fields(prior: dict[str, Any], config: dict[str, Any]) -> list[s
         if prior_scope.get(field_name) != config["budgets"][scope][field_name]:
             changed.append(f"budgets.{scope}.{field_name}")
     return changed
-
-
-def recorded_change_apply_iterations(
-    repo_root: Path,
-    change_id: str,
-    paths: dict[str, Any],
-) -> tuple[int, bool]:
-    """Read prior apply usage for a restamp advisory without creating a ledger."""
-    raw_path = paths.get("ledger")
-    if not raw_path:
-        return 0, False
-    ledger_path = Path(str(raw_path))
-    if not ledger_path.is_absolute():
-        ledger_path = repo_root / ledger_path
-    if not ledger_path.exists():
-        return 0, True
-    try:
-        ledger = load_or_init_ledger(ledger_path.resolve(), change_id)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
-        return 0, False
-    return apply_iteration_count(attempts_for_change(ledger)), True
-
-
-def semantic_budget_advisories(
-    repo_root: Path,
-    change_id: str,
-    tasks: list[dict[str, Any]],
-    config: dict[str, Any],
-    *,
-    semantic_change: bool,
-) -> list[dict[str, Any]]:
-    """Warn when remaining work exceeds a confirmed change budget."""
-    if not semantic_change:
-        return []
-
-    budgets = merge_budget_defaults(config.get("budgets"))
-    max_apply_attempts = budgets["task"]["max_apply_attempts"]
-    configured = budgets["change"]["max_iterations"]
-    nonterminal_ref_count = sum(
-        1 for task in tasks if task.get("effective_state") not in TERMINAL_STATES
-    )
-    already_used, usage_known = recorded_change_apply_iterations(
-        repo_root,
-        change_id,
-        config.get("paths") if isinstance(config.get("paths"), dict) else {},
-    )
-    remaining = nonterminal_ref_count * max_apply_attempts
-    recommended = already_used + remaining if usage_known else remaining
-    if configured >= recommended:
-        return []
-
-    return [
-        {
-            "field": "budgets.change.max_iterations",
-            "configured": configured,
-            "recommended": recommended,
-            "shortfall": recommended - configured,
-        }
-    ]
 
 
 def cmd_seal(args: argparse.Namespace) -> int:
@@ -2714,13 +2657,16 @@ def cmd_seal(args: argparse.Namespace) -> int:
         return 2
 
     budgets: dict[str, dict[str, int]] = {"task": {}, "revision": {}, "change": {}}
-    scaled_change = scaled_change_defaults(len(preflight["tasks"]))
+    change_defaults = DEFAULT_BUDGETS["change"].copy()
+    change_defaults["max_active_minutes"] = max(
+        change_defaults["max_active_minutes"], 10 * len(preflight["tasks"])
+    )
     for scope, field_name, attribute in SEAL_BUDGET_ARGS:
         prior_scope = (
             prior_budgets.get(scope) if isinstance(prior_budgets.get(scope), dict) else {}
         )
         fallback = (
-            scaled_change[field_name]
+            change_defaults[field_name]
             if scope == "change"
             else DEFAULT_BUDGETS[scope][field_name]
         )
@@ -2756,43 +2702,58 @@ def cmd_seal(args: argparse.Namespace) -> int:
     prior_ceiling = (
         prior.get("hard_ceiling") if isinstance(prior.get("hard_ceiling"), dict) else {}
     )
-    derived_ceiling = derive_hard_ceiling(budgets["change"])
-    hard_ceiling = {
-        key: inherit_value(
-            getattr(args, attribute), prior_ceiling.get(key), derived_ceiling[key]
-        )
-        for key, attribute in SEAL_CEILING_ARGS
-    }
-    invalid_ceiling_paths = [
-        key for key, value in hard_ceiling.items() if not isinstance(value, int) or value <= 0
-    ]
-    if invalid_ceiling_paths:
-        emit_json(
-            {
-                "schema_version": SCHEMA_LOOP,
-                "change_id": args.change_id,
-                "written": False,
-                "issues": [
-                    "hard_ceiling must be positive: " + ", ".join(sorted(invalid_ceiling_paths))
-                ],
-            }
-        )
-        return 2
-    contradictions = [
-        f"budgets.change.{budget_key} exceeds hard_ceiling.{ceiling_key}"
-        for ceiling_key, budget_key in HARD_CEILING_BUDGET_LINKS
-        if budgets["change"][budget_key] > hard_ceiling[ceiling_key]
-    ]
-    if contradictions:
-        emit_json(
-            {
-                "schema_version": SCHEMA_LOOP,
-                "change_id": args.change_id,
-                "written": False,
-                "issues": contradictions,
-            }
-        )
-        return 2
+    ceiling_requested = bool(prior_ceiling) or any(
+        getattr(args, attribute_name) is not None
+        for _, attribute_name in SEAL_CEILING_ARGS
+    )
+    hard_ceiling = (
+        {
+            key: inherit_value(
+                getattr(args, attribute),
+                prior_ceiling.get(key),
+                None,
+            )
+            for key, attribute in SEAL_CEILING_ARGS
+        }
+        if ceiling_requested
+        else {}
+    )
+    hard_ceiling = {key: value for key, value in hard_ceiling.items() if value is not None}
+    if hard_ceiling:
+        invalid_ceiling_paths = [
+            key
+            for key, value in hard_ceiling.items()
+            if not isinstance(value, int) or value <= 0
+        ]
+        if invalid_ceiling_paths:
+            emit_json(
+                {
+                    "schema_version": SCHEMA_LOOP,
+                    "change_id": args.change_id,
+                    "written": False,
+                    "issues": [
+                        "hard_ceiling must be positive: "
+                        + ", ".join(sorted(invalid_ceiling_paths))
+                    ],
+                }
+            )
+            return 2
+        contradictions = [
+            f"budgets.change.{budget_key} exceeds hard_ceiling.{ceiling_key}"
+            for ceiling_key, budget_key in HARD_CEILING_BUDGET_LINKS
+            if ceiling_key in hard_ceiling
+            and budgets["change"][budget_key] > hard_ceiling[ceiling_key]
+        ]
+        if contradictions:
+            emit_json(
+                {
+                    "schema_version": SCHEMA_LOOP,
+                    "change_id": args.change_id,
+                    "written": False,
+                    "issues": contradictions,
+                }
+            )
+            return 2
     prior_per_ref = (
         prior.get("per_ref_budgets")
         if isinstance(prior.get("per_ref_budgets"), dict)
@@ -2825,20 +2786,14 @@ def cmd_seal(args: argparse.Namespace) -> int:
         "paths": paths,
         "budgets": budgets,
         "per_ref_budgets": per_ref_budgets,
-        "hard_ceiling": hard_ceiling,
         "test_profiles": DEFAULT_TEST_PROFILES.copy(),
         "confirmed_at": args.confirmed_at or utc_now(),
     }
+    if hard_ceiling:
+        config["hard_ceiling"] = hard_ceiling
     changed_fields = seal_changed_fields(prior, config)
     semantic_change = bool(prior) and (
         prior.get("contract_fingerprint") != config["contract_fingerprint"]
-    )
-    budget_advisories = semantic_budget_advisories(
-        repo_root,
-        args.change_id,
-        preflight["tasks"],
-        config,
-        semantic_change=semantic_change,
     )
     path = loop_config_path(repo_root, args.change_id)
     write_json_atomic(path, config)
@@ -2851,7 +2806,7 @@ def cmd_seal(args: argparse.Namespace) -> int:
             "inherited_from_prior_seal": bool(prior),
             "semantic_change": semantic_change,
             "changed_fields": changed_fields,
-            "budget_advisories": budget_advisories,
+            "budget_advisories": [],
             "contract_fingerprint": config["contract_fingerprint"],
             "narrative_digest": config["narrative_digest"],
         }
@@ -2861,7 +2816,6 @@ def cmd_seal(args: argparse.Namespace) -> int:
 
 CHANGE_BUDGET_OVERRIDES = (
     ("set_max_revisions", "max_revisions"),
-    ("set_max_total_iterations", "max_iterations"),
     ("set_max_total_active_minutes", "max_active_minutes"),
 )
 
@@ -2882,7 +2836,13 @@ def reseal_failure(change_id: str, issues: list[str], **extra: Any) -> int:
 def cmd_reseal(args: argparse.Namespace) -> int:
     repo_root = args.repo_root.resolve()
     change_id = args.change_id
-    config = load_loop_config(repo_root, change_id)
+    path = loop_config_path(repo_root, change_id)
+    raw_config = None
+    if path.exists():
+        raw_config = json.loads(read_utf8(path))
+        if not isinstance(raw_config, dict):
+            return reseal_failure(change_id, ["loop.json must be a JSON object"])
+    config = sanitize_loop_config(raw_config) if raw_config is not None else None
     if config is None:
         return reseal_failure(
             change_id,
@@ -3017,38 +2977,25 @@ def cmd_reseal(args: argparse.Namespace) -> int:
         changed_fields.append("narrative_policy")
 
     updated["autonomy"] = autonomy
-    final_change = merge_budget_defaults(updated.get("budgets"))["change"]
-    derived_ceiling = derive_hard_ceiling(final_change)
     if prior_ceiling is None:
-        updated["hard_ceiling"] = derived_ceiling
+        updated.pop("hard_ceiling", None)
     else:
-        # `reseal` inherits a ceiling verbatim. Raising one is a boundary
-        # decision and belongs to human-confirmed `seal`.
         updated["hard_ceiling"] = {
-            key: (
-                prior_ceiling[key]
-                if isinstance(prior_ceiling.get(key), int)
-                and not isinstance(prior_ceiling.get(key), bool)
-                and prior_ceiling[key] > 0
-                else derived_ceiling[key]
-            )
+            key: prior_ceiling[key]
             for key, _ in SEAL_CEILING_ARGS
+            if isinstance(prior_ceiling.get(key), int)
+            and not isinstance(prior_ceiling.get(key), bool)
+            and prior_ceiling[key] > 0
         }
+        if not updated["hard_ceiling"]:
+            updated.pop("hard_ceiling", None)
 
     post_issues = loop_config_issues(updated, change_id)
     if post_issues:
         return reseal_failure(change_id, post_issues)
 
     restamp_plan = build_plan_payload(repo_root, change_id, advisory=True)
-    budget_advisories = semantic_budget_advisories(
-        repo_root,
-        change_id,
-        restamp_plan["tasks"],
-        updated,
-        semantic_change=semantic_change,
-    )
     updated["resealed_at"] = utc_now()
-    path = loop_config_path(repo_root, change_id)
     write_json_atomic(path, updated)
     emit_json(
         {
@@ -3060,9 +3007,9 @@ def cmd_reseal(args: argparse.Namespace) -> int:
             "semantic_change": semantic_change,
             "revision_charged": False,
             "changed_fields": changed_fields,
-            "budget_advisories": budget_advisories,
+            "budget_advisories": [],
             "autonomy": updated["autonomy"],
-            "hard_ceiling": updated["hard_ceiling"],
+            "hard_ceiling": updated.get("hard_ceiling"),
             "self_extensions_used": self_extensions_used(updated),
             "contract_fingerprint": semantic,
             "narrative_digest": narrative,
@@ -3295,7 +3242,7 @@ def validate_record_writes(
     if not changed_files:
         return
     scopes = [normalize_record_path(item) for item in task.get("write_scope", [])]
-    if role_id in {"implementer", "test-engineer", "rose"}:
+    if role_id in {"implementer", "test-engineer"} | SUPERVISOR_DIRECT_ROLE_IDS:
         if not scopes:
             raise ValueError(f"task `{task['ref']}` has no declared write_scope")
         outside = [
@@ -3449,7 +3396,7 @@ def cmd_record(args: argparse.Namespace) -> int:
             for item in revision_attempts
         ):
             raise ValueError(f"duplicate canonical Apply packet_id `{packet_id}`")
-        expected_role_id = route.get("effective_role_id") or "rose"
+        expected_role_id = route.get("effective_role_id") or LOCAL_SUPERVISOR_ROLE_ID
         if strict_apply and args.role_id and args.role_id != expected_role_id:
             raise ValueError("Apply Role ID does not match the routed packet snapshot")
         role_id = expected_role_id
@@ -3530,7 +3477,7 @@ def cmd_record(args: argparse.Namespace) -> int:
         "consumes_apply_attempt": args.kind == "apply",
         "consumes_scheduling_headcount": (
             args.kind == "apply"
-            and role_id != "rose"
+            and role_id not in SUPERVISOR_DIRECT_ROLE_IDS
             and bool(route.get("agent"))
         ),
         "canonical_apply_record": args.kind == "apply",
@@ -3790,17 +3737,9 @@ def gate_reasons(
     revision_budget = budgets["revision"]
     change_budget = budgets["change"]
 
-    revision_iterations = apply_iteration_count(revision_attempts)
-    change_iterations = apply_iteration_count(change_attempts)
-    if next_kind in {None, "apply"}:
-        if revision_iterations >= revision_budget["max_iterations"]:
-            reasons.append(
-                f"revision_max_iterations_reached:{revision_budget['max_iterations']}"
-            )
-        if change_iterations >= change_budget["max_iterations"]:
-            reasons.append(
-                f"change_max_iterations_reached:{change_budget['max_iterations']}"
-            )
+    # Revision/change Apply totals are compatibility diagnostics only.  The
+    # selected ref's task budget (plus ref-local unblock authority) owns Apply
+    # count gating, so aggregate totals cannot starve an independent ready ref.
 
     revision_minutes = active_seconds(revision_attempts) / 60
     change_minutes = active_seconds(change_attempts) / 60
@@ -3882,10 +3821,8 @@ def gate_reasons(
 def cmd_gate(args: argparse.Namespace) -> int:
     _, config, fingerprint, ledger_path, budgets, warnings = resolve_runtime_policy(args)
     ceiling = hard_ceiling_of(config)
-    # Per-run overrides retain their ordinary iteration/minute semantics.  A
-    # legacy hard ceiling is diagnostic and does not cap or terminalize Apply.
-    if args.max_iterations is not None:
-        budgets["revision"]["max_iterations"] = args.max_iterations
+    # Per-run overrides retain their ordinary minute semantics. A legacy
+    # hard ceiling is diagnostic and does not cap or terminalize Apply.
     if args.max_active_minutes is not None:
         budgets["revision"]["max_active_minutes"] = args.max_active_minutes
     if args.max_subagents is not None:
@@ -3954,8 +3891,6 @@ def cmd_summary(args: argparse.Namespace) -> int:
     attempts = run.get("attempts", [])
     revision_attempts = attempts_for_episode(episode)
     change_attempts = attempts_for_change(ledger)
-    revision_apply_iterations_used = apply_iteration_count(revision_attempts)
-    change_apply_iterations_used = apply_iteration_count(change_attempts)
     per_ref: dict[str, dict[str, int]] = {}
     for attempt in attempts:
         ref = attempt.get("ref") or "unknown"
@@ -3974,17 +3909,6 @@ def cmd_summary(args: argparse.Namespace) -> int:
             "attempt_count": len(attempts),
             "revision_attempt_count": len(revision_attempts),
             "change_attempt_count": len(change_attempts),
-            "revision_apply_iterations_used": revision_apply_iterations_used,
-            "revision_apply_iterations_remaining": max(
-                budgets["revision"]["max_iterations"]
-                - revision_apply_iterations_used,
-                0,
-            ),
-            "change_apply_iterations_used": change_apply_iterations_used,
-            "change_apply_iterations_remaining": max(
-                budgets["change"]["max_iterations"] - change_apply_iterations_used,
-                0,
-            ),
             "revision_active_seconds": active_seconds(revision_attempts),
             "change_active_seconds": active_seconds(change_attempts),
             "revision_count": productive_revision_count(ledger),
@@ -4073,7 +3997,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="supervised: extension and amendment need --confirmed; "
         "full_auto: a recorded --reason suffices, bounded by hard_ceiling",
     )
-    seal.add_argument("--hard-ceiling-max-iterations", type=int)
     seal.add_argument("--hard-ceiling-max-active-minutes", type=int)
     seal.add_argument("--hard-ceiling-max-self-extensions", type=int)
     seal.add_argument("--ledger-path")
@@ -4084,12 +4007,10 @@ def build_parser() -> argparse.ArgumentParser:
     seal.add_argument("--confirmed-at")
     seal.add_argument("--max-apply-attempts", type=int)
     seal.add_argument("--max-unblock-runs", type=int)
-    seal.add_argument("--max-iterations", type=int)
     seal.add_argument("--max-explore-runs", type=int)
     seal.add_argument("--max-subagents", type=int)
     seal.add_argument("--max-active-minutes", type=int)
     seal.add_argument("--max-revisions", type=int)
-    seal.add_argument("--max-total-iterations", type=int)
     seal.add_argument("--max-total-active-minutes", type=int)
     seal.set_defaults(func=cmd_seal)
 
@@ -4105,7 +4026,6 @@ def build_parser() -> argparse.ArgumentParser:
     reseal.add_argument("--narrative-policy", choices=NARRATIVE_POLICIES)
     reseal.add_argument("--reason")
     reseal.add_argument("--set-max-revisions", type=int)
-    reseal.add_argument("--set-max-total-iterations", type=int)
     reseal.add_argument("--set-max-total-active-minutes", type=int)
     reseal.set_defaults(func=cmd_reseal)
 
@@ -4191,7 +4111,6 @@ def build_parser() -> argparse.ArgumentParser:
     gate.add_argument("--ledger-path", type=Path)
     gate.add_argument("--subagent-id", action="append", default=[])
     gate.add_argument("--current-allocated-subagents", type=int)
-    gate.add_argument("--max-iterations", type=int)
     gate.add_argument("--max-active-minutes", "--max-minutes", type=int)
     gate.add_argument("--max-subagents", type=int)
     gate.add_argument("--max-apply-attempts", type=int)

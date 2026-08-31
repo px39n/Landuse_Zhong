@@ -180,6 +180,8 @@ def test_missing_loop_auto_initializes_thin_defaults(tmp_path: Path) -> None:
     config = json.loads(loop_path.read_text(encoding="utf-8"))
     assert config["retention"] == "thin"
     assert config["contract_fingerprint"] == planned["contract_fingerprint"]
+    assert "max_iterations" not in config["budgets"]["revision"]
+    assert "max_iterations" not in config["budgets"]["change"]
     assert config["per_ref_budgets"] == {
         "R1": {"max_apply_attempts": 2, "max_unblock_runs": 2},
         "R2": {"max_apply_attempts": 2, "max_unblock_runs": 2},
@@ -194,6 +196,8 @@ def test_missing_loop_auto_initializes_thin_defaults(tmp_path: Path) -> None:
     assert "sealed" not in config
     assert "confirmed_at" not in config
     assert "hard_ceiling" not in config
+    checked = run_loop_direct(tmp_path, "check", "demo")
+    assert checked["ok"] is True
     assert not (tmp_path / "test_cache").exists()
     assert not (tmp_path / "auto_test_openspec").exists()
 
@@ -1000,7 +1004,7 @@ def test_record_gate_and_summary_enforce_budgets_and_breakers(tmp_path: Path) ->
     assert "Boom failed" not in ledger.read_text(encoding="utf-8")
 
 
-def test_summary_v3_separates_apply_iterations_from_all_attempts(tmp_path: Path) -> None:
+def test_summary_v3_keeps_attempt_totals_without_apply_iteration_fields(tmp_path: Path) -> None:
     ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
     write_contract(
         tmp_path,
@@ -1011,8 +1015,8 @@ def test_summary_v3_separates_apply_iterations_from_all_attempts(tmp_path: Path)
     fingerprint = seal_demo(
         tmp_path,
         ledger,
-        "--max-total-iterations",
-        "24",
+        "--max-total-active-minutes",
+        "240",
     )["contract_fingerprint"]
 
     for index in range(4):
@@ -1049,10 +1053,11 @@ def test_summary_v3_separates_apply_iterations_from_all_attempts(tmp_path: Path)
 
     assert summary["schema_version"] == "openspec-loop-summary.v3"
     assert summary["revision_attempt_count"] == 8
-    assert summary["revision_apply_iterations_used"] == 4
-    assert summary["revision_apply_iterations_remaining"] == 4
-    assert summary["change_apply_iterations_used"] == 4
-    assert summary["change_apply_iterations_remaining"] == 20
+    assert summary["change_attempt_count"] == 8
+    assert "revision_apply_iterations_used" not in summary
+    assert "revision_apply_iterations_remaining" not in summary
+    assert "change_apply_iterations_used" not in summary
+    assert "change_apply_iterations_remaining" not in summary
 
 
 def test_two_unblocks_require_new_evidence_and_make_the_default_second_terminal(
@@ -1397,7 +1402,9 @@ def test_headcount_fields_are_diagnostic_and_do_not_reduce_wave_or_allowance(
     assert not any("max_subagents" in reason for reason in gate["reasons"])
 
 
-def test_gate_budgets_span_run_ids_within_one_revision(tmp_path: Path) -> None:
+def test_gate_omits_revision_and_change_iteration_stops_but_keeps_task_max_apply_attempts(
+    tmp_path: Path,
+) -> None:
     ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
     fingerprint = "run-scope"
 
@@ -1448,13 +1455,13 @@ def test_gate_budgets_span_run_ids_within_one_revision(tmp_path: Path) -> None:
         "R1",
         "--kind",
         "apply",
-        "--max-iterations",
-        "2",
         "--ledger-path",
         str(ledger),
         expected_exit=2,
     )
-    assert "revision_max_iterations_reached:2" in old_gate["reasons"]
+    assert "task_max_apply_attempts_reached:R1:2" in old_gate["reasons"]
+    assert not any("revision_max_iterations_reached" in reason for reason in old_gate["reasons"])
+    assert not any("change_max_iterations_reached" in reason for reason in old_gate["reasons"])
 
     verify_after_last_apply = run_loop(
         tmp_path,
@@ -1468,8 +1475,6 @@ def test_gate_budgets_span_run_ids_within_one_revision(tmp_path: Path) -> None:
         "R1",
         "--kind",
         "verify",
-        "--max-iterations",
-        "2",
         "--ledger-path",
         str(ledger),
     )
@@ -1484,16 +1489,15 @@ def test_gate_budgets_span_run_ids_within_one_revision(tmp_path: Path) -> None:
         "--run-id",
         "run-fresh",
         "--ref",
-        "R1",
+        "R2",
         "--kind",
         "apply",
-        "--max-iterations",
-        "2",
         "--ledger-path",
         str(ledger),
-        expected_exit=2,
     )
-    assert "revision_max_iterations_reached:2" in fresh_gate["reasons"]
+    assert fresh_gate["decision"] == "continue"
+    assert not any("revision_max_iterations_reached" in reason for reason in fresh_gate["reasons"])
+    assert not any("change_max_iterations_reached" in reason for reason in fresh_gate["reasons"])
 
     run_loop(
         tmp_path,
@@ -1524,13 +1528,11 @@ def test_gate_budgets_span_run_ids_within_one_revision(tmp_path: Path) -> None:
         "R2",
         "--kind",
         "apply",
-        "--max-iterations",
-        "1",
         "--ledger-path",
         str(ledger),
-        expected_exit=2,
     )
-    assert "revision_max_iterations_reached:1" in helper_gate["reasons"]
+    assert helper_gate["decision"] == "continue"
+    assert not any("revision_max_iterations_reached" in reason for reason in helper_gate["reasons"])
 
 
 def test_gate_counts_active_duration_not_wall_clock_waiting(tmp_path: Path) -> None:
@@ -1655,7 +1657,7 @@ def test_check_rejects_incomplete_or_invalid_sealed_policy(tmp_path: Path) -> No
     loop_path = tmp_path / "openspec" / "changes" / "demo" / "loop.json"
     policy = json.loads(loop_path.read_text(encoding="utf-8"))
     del policy["paths"]["product"]
-    policy["budgets"]["revision"]["max_iterations"] = 0
+    policy["budgets"]["revision"]["max_explore_runs"] = 0
     del policy["test_profiles"]["promotion"]
     policy["confirmed_at"] = ""
     loop_path.write_text(
@@ -1667,7 +1669,7 @@ def test_check_rejects_incomplete_or_invalid_sealed_policy(tmp_path: Path) -> No
 
     assert "loop.json paths missing: product" in checked["issues"]
     assert (
-        "loop.json budgets.revision must be positive integers: max_iterations"
+        "loop.json budgets.revision must be positive integers: max_explore_runs"
         in checked["issues"]
     )
     assert "loop.json test_profiles missing: promotion" in checked["issues"]
@@ -1742,7 +1744,7 @@ def test_repeated_semantic_deviation_trips_result_breaker(tmp_path: Path) -> Non
     assert "repeated_deviation_breaker" in gate["reasons"]
 
 
-def test_new_revision_does_not_reset_change_iteration_budget(tmp_path: Path) -> None:
+def test_change_iterations_do_not_stop_a_new_revision_apply(tmp_path: Path) -> None:
     ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
     run_loop(
         tmp_path,
@@ -1775,7 +1777,7 @@ def test_new_revision_does_not_reset_change_iteration_budget(tmp_path: Path) -> 
         "thin",
         "--ledger-path",
         str(ledger),
-        "--max-total-iterations",
+        "--max-total-active-minutes",
         "1",
     )
     gate = run_loop(
@@ -1790,10 +1792,9 @@ def test_new_revision_does_not_reset_change_iteration_budget(tmp_path: Path) -> 
         "apply",
         "--ledger-path",
         str(ledger),
-        expected_exit=2,
     )
-    assert "change_max_iterations_reached:1" in gate["reasons"]
-    assert gate["budgets"]["change"]["max_iterations"] == 1
+    assert gate["decision"] == "continue"
+    assert gate["budgets"]["change"]["max_active_minutes"] == 1
 
 
 def write_narrative(repo_root: Path, change_id: str, marker: str) -> None:
@@ -1931,7 +1932,7 @@ def test_reseal_migrate_upgrades_a_v2_config_without_losing_policy(tmp_path: Pat
     )
     write_narrative(tmp_path, "demo", "first")
     ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
-    seal_demo(tmp_path, ledger, "--max-revisions", "7", "--max-total-iterations", "44")
+    seal_demo(tmp_path, ledger, "--max-revisions", "7", "--max-total-active-minutes", "440")
 
     loop_path = tmp_path / "openspec" / "changes" / "demo" / "loop.json"
     legacy = read_config(tmp_path)
@@ -1955,7 +1956,9 @@ def test_reseal_migrate_upgrades_a_v2_config_without_losing_policy(tmp_path: Pat
     assert config["schema_version"] == "openspec-loop.v3"
     assert config["narrative_policy"] == "advisory"
     assert config["budgets"]["change"]["max_revisions"] == 7
-    assert config["budgets"]["change"]["max_iterations"] == 44
+    assert "max_iterations" not in config["budgets"]["change"]
+    assert "max_iterations" not in config.get("budgets", {}).get("revision", {})
+    assert "max_iterations" not in config.get("hard_ceiling", {})
     assert config["paths"] == legacy["paths"]
     assert config["test_profiles"] == legacy["test_profiles"]
     assert run_loop(tmp_path, "check", "demo")["ok"] is True
@@ -2131,15 +2134,22 @@ def seal_ceiling_demo(tmp_path: Path, *extra: str) -> Path:
         base_features([("R1", "1.1", False, False)]),
     )
     ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
-    seal_demo(tmp_path, ledger, *extra)
+    seal_demo(
+        tmp_path,
+        ledger,
+        "--hard-ceiling-max-active-minutes",
+        "1080",
+        "--hard-ceiling-max-self-extensions",
+        "3",
+        *extra,
+    )
     return ledger
 
 
-def test_hard_ceiling_is_derived_at_seal_but_does_not_bound_gate_overrides(tmp_path: Path) -> None:
+def test_hard_ceiling_keeps_minutes_only_and_does_not_bound_gate_overrides(tmp_path: Path) -> None:
     ledger = seal_ceiling_demo(tmp_path)
     config = read_config(tmp_path)
     assert config["hard_ceiling"] == {
-        "max_iterations": 60,
         "max_active_minutes": 1080,
         "max_self_extensions": 3,
     }
@@ -2155,8 +2165,6 @@ def test_hard_ceiling_is_derived_at_seal_but_does_not_bound_gate_overrides(tmp_p
         "R1",
         "--kind",
         "apply",
-        "--max-iterations",
-        "999",
         "--max-active-minutes",
         "99999",
         "--ledger-path",
@@ -2164,21 +2172,20 @@ def test_hard_ceiling_is_derived_at_seal_but_does_not_bound_gate_overrides(tmp_p
     )
     assert gate["decision"] == "continue"
     assert gate["terminal"] is False
-    assert gate["budgets"]["revision"]["max_iterations"] == 999
     assert gate["budgets"]["revision"]["max_active_minutes"] == 99999
     assert gate["hard_ceiling"] == config["hard_ceiling"]
     assert gate["self_extensions_used"] == 0
 
 
-def test_hard_ceiling_remains_diagnostic_after_change_budget_stop(tmp_path: Path) -> None:
-    ledger = seal_ceiling_demo(
-        tmp_path,
-        "--max-total-iterations",
-        "2",
-        "--hard-ceiling-max-iterations",
-        "5",
-    )
+def test_deleted_iteration_keys_are_ignored_and_migrated(tmp_path: Path) -> None:
+    ledger = seal_ceiling_demo(tmp_path)
     fingerprint = read_config(tmp_path)["contract_fingerprint"]
+    loop_path = tmp_path / "openspec" / "changes" / "demo" / "loop.json"
+    config = read_config(tmp_path)
+    config["budgets"]["revision"]["max_iterations"] = 2
+    config["budgets"]["change"]["max_iterations"] = 2
+    config.setdefault("hard_ceiling", {})["max_iterations"] = 5
+    loop_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     write_ledger(ledger, [episode(fingerprint, 2)])
 
     extendable = run_loop(
@@ -2191,42 +2198,21 @@ def test_hard_ceiling_remains_diagnostic_after_change_budget_stop(tmp_path: Path
         "R1",
         "--kind",
         "apply",
+        "--max-apply-attempts",
+        "3",
         "--ledger-path",
         str(ledger),
-        expected_exit=2,
     )
-    assert "change_max_iterations_reached:2" in extendable["reasons"]
+    assert extendable["decision"] == "continue"
+    assert not any("max_iterations_reached" in reason for reason in extendable["reasons"])
     assert extendable["terminal"] is False
-
-    run_loop(
-        tmp_path,
-        "reseal",
-        "demo",
-        "--set-max-total-iterations",
-        "5",
-        "--confirmed",
-        "--reason",
-        "authorized extension",
-    )
-    write_ledger(ledger, [episode(fingerprint, 5)])
-
-    terminal = run_loop(
-        tmp_path,
-        "gate",
-        "demo",
-        "--run-id",
-        "run-ceiling",
-        "--ref",
-        "R1",
-        "--kind",
-        "apply",
-        "--ledger-path",
-        str(ledger),
-        expected_exit=2,
-    )
-    assert "change_max_iterations_reached:5" in terminal["reasons"]
-    assert not any(reason.startswith("hard_ceiling_") for reason in terminal["reasons"])
-    assert terminal["terminal"] is False
+    migrated = run_loop_direct(tmp_path, "plan", "demo")
+    assert migrated["selected_wave"] == ["R1"]
+    assert migrated["apply_remaining"] == 0
+    cleaned = read_config(tmp_path)
+    assert "max_iterations" not in cleaned["budgets"]["revision"]
+    assert "max_iterations" not in cleaned["budgets"]["change"]
+    assert "max_iterations" not in cleaned["hard_ceiling"]
 
 
 def test_reseal_never_raises_hard_ceiling_and_refuses_a_budget_above_it(
@@ -2234,9 +2220,9 @@ def test_reseal_never_raises_hard_ceiling_and_refuses_a_budget_above_it(
 ) -> None:
     seal_ceiling_demo(
         tmp_path,
-        "--max-total-iterations",
+        "--max-total-active-minutes",
         "20",
-        "--hard-ceiling-max-iterations",
+        "--hard-ceiling-max-active-minutes",
         "30",
     )
 
@@ -2244,7 +2230,7 @@ def test_reseal_never_raises_hard_ceiling_and_refuses_a_budget_above_it(
         tmp_path,
         "reseal",
         "demo",
-        "--set-max-total-iterations",
+        "--set-max-total-active-minutes",
         "40",
         "--confirmed",
         "--reason",
@@ -2252,23 +2238,23 @@ def test_reseal_never_raises_hard_ceiling_and_refuses_a_budget_above_it(
         expected_exit=2,
     )
     assert refused["written"] is False
-    assert any("exceeds hard_ceiling.max_iterations 30" in issue for issue in refused["issues"])
-    assert read_config(tmp_path)["budgets"]["change"]["max_iterations"] == 20
+    assert any("exceeds hard_ceiling.max_active_minutes 30" in issue for issue in refused["issues"])
+    assert read_config(tmp_path)["budgets"]["change"]["max_active_minutes"] == 20
 
     allowed = run_loop(
         tmp_path,
         "reseal",
         "demo",
-        "--set-max-total-iterations",
+        "--set-max-total-active-minutes",
         "30",
         "--confirmed",
         "--reason",
         "authorized extension",
     )
-    assert allowed["changed_fields"] == ["change.max_iterations"]
+    assert allowed["changed_fields"] == ["change.max_active_minutes"]
     config = read_config(tmp_path)
-    assert config["budgets"]["change"]["max_iterations"] == 30
-    assert config["hard_ceiling"]["max_iterations"] == 30
+    assert config["budgets"]["change"]["max_active_minutes"] == 30
+    assert config["hard_ceiling"]["max_active_minutes"] == 30
 
 
 def test_reseal_refuses_a_further_extension_once_self_extensions_are_used(
@@ -2407,14 +2393,14 @@ def test_seal_refuses_a_change_budget_above_an_explicit_hard_ceiling(tmp_path: P
         "thin",
         "--ledger-path",
         str(ledger),
-        "--max-total-iterations",
+        "--max-total-active-minutes",
         "40",
-        "--hard-ceiling-max-iterations",
+        "--hard-ceiling-max-active-minutes",
         "10",
         expected_exit=2,
     )
     assert refused["written"] is False
-    assert "budgets.change.max_iterations exceeds hard_ceiling.max_iterations" in refused["issues"]
+    assert "budgets.change.max_active_minutes exceeds hard_ceiling.max_active_minutes" in refused["issues"]
     assert not (tmp_path / "openspec" / "changes" / "demo" / "loop.json").exists()
 
 
@@ -2716,6 +2702,155 @@ def test_selected_wave_write_scope_partitions_overlaps_without_truncating_three_
     assert "write_scope_overlap" in by_ref["R4"]["wave_blockers"]
 
 
+def test_local_zpy_direct_role_preserves_legacy_rose_bootstrap(
+    tmp_path: Path,
+) -> None:
+    tasks = """## Active Task Registry
+
+- [ ] 1.1 Legacy bootstrap [#R1]
+  - INDEPENDENT: yes
+  - ROLE_ID: rose
+  - FILES: `docs/bootstrap.md`
+  - WRITE_SCOPE: `docs/bootstrap.md`
+  - JOIN: role-bootstrap
+- [ ] 1.2 Local supervisor [#R2]
+  - INDEPENDENT: yes
+  - ROLE_ID: zpy
+  - FILES: `docs/zpy.md`
+  - WRITE_SCOPE: `docs/zpy.md`
+  - JOIN: role-bootstrap
+- [ ] 1.3 Inferred direct [#R3]
+  - INDEPENDENT: yes
+  - JOIN: role-bootstrap
+"""
+    write_contract(
+        tmp_path,
+        "demo",
+        tasks,
+        base_features(
+            [("R1", "1.1", False, False), ("R2", "1.2", False, False), ("R3", "1.3", False, False)]
+        ),
+    )
+    write_thin_retention_decision(tmp_path)
+
+    payload = run_loop_direct(tmp_path, "plan", "demo")
+    routes = {route["ref"]: route for route in payload["routing"]}
+
+    assert routes["R1"]["matched_role_id"] == "rose"
+    assert routes["R1"]["effective_role_id"] == "rose"
+    assert routes["R1"]["decision"] == "direct"
+    assert routes["R1"]["agent"] is None
+    assert routes["R2"]["matched_role_id"] == "zpy"
+    assert routes["R2"]["effective_role_id"] == "zpy"
+    assert routes["R2"]["decision"] == "direct"
+    assert routes["R2"]["agent"] is None
+    assert routes["R3"]["matched_role_id"] is None
+    assert routes["R3"]["effective_role_id"] == "zpy"
+    assert routes["R3"]["decision"] == "direct"
+    assert routes["R3"]["agent"] is None
+    assert all(route["write_policy"] == "supervisor_direct" for route in routes.values())
+
+    run_loop_direct(
+        tmp_path,
+        "record",
+        "demo",
+        "--run-id",
+        "role-run",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--result",
+        "completed",
+        "--attempt-id",
+        "legacy-bootstrap",
+        "--role-id",
+        "rose",
+        "--changed-file",
+        "docs/bootstrap.md",
+        "--evidence",
+        "inspect:R1",
+    )
+    run_loop_direct(
+        tmp_path,
+        "record",
+        "demo",
+        "--run-id",
+        "role-run",
+        "--ref",
+        "R2",
+        "--kind",
+        "apply",
+        "--result",
+        "completed",
+        "--attempt-id",
+        "local-zpy",
+        "--role-id",
+        "zpy",
+        "--changed-file",
+        "docs/zpy.md",
+        "--evidence",
+        "inspect:R2",
+    )
+    summary = run_loop_direct(tmp_path, "summary", "demo", "--run-id", "role-run")
+    by_ref = {attempt["ref"]: attempt for attempt in summary["attempts"]}
+    assert by_ref["R1"]["role_id"] == "rose"
+    assert by_ref["R2"]["role_id"] == "zpy"
+    assert by_ref["R1"]["consumes_scheduling_headcount"] is False
+    assert by_ref["R2"]["consumes_scheduling_headcount"] is False
+
+
+def test_dispatch_refs_keep_direct_zpy_refs_out_of_host_batch(tmp_path: Path) -> None:
+    tasks = """## Active Task Registry
+
+- [ ] 1.1 Direct supervisor ref [#Rd]
+  - INDEPENDENT: yes
+  - ROLE_ID: zpy
+  - JOIN: mixed-host-batch
+- [ ] 1.2 Implement lane one [#Ri1]
+  - INDEPENDENT: yes
+  - ROLE_ID: implementer
+  - FILES: `src/lane_one.py`
+  - WRITE_SCOPE: `src/lane_one.py`
+  - JOIN: mixed-host-batch
+- [ ] 1.3 Implement lane two [#Ri2]
+  - INDEPENDENT: yes
+  - ROLE_ID: implementer
+  - FILES: `src/lane_two.py`
+  - WRITE_SCOPE: `src/lane_two.py`
+  - JOIN: mixed-host-batch
+"""
+    write_contract(
+        tmp_path,
+        "demo",
+        tasks,
+        base_features(
+            [("Rd", "1.1", False, False), ("Ri1", "1.2", False, False), ("Ri2", "1.3", False, False)]
+        ),
+    )
+    write_thin_retention_decision(tmp_path)
+
+    payload = run_loop_direct(tmp_path, "plan", "demo")
+    routes = {route["ref"]: route for route in payload["routing"]}
+
+    assert payload["selected_wave"] == ["Rd", "Ri1", "Ri2"]
+    assert payload["dispatch_refs"] == ["Rd", "Ri1", "Ri2"]
+    assert routes["Rd"]["decision"] == "direct"
+    assert routes["Rd"]["effective_role_id"] == "zpy"
+    assert routes["Rd"]["agent"] is None
+    assert routes["Ri1"]["decision"] == "dispatch"
+    assert routes["Ri1"]["agent"] is not None
+    assert routes["Ri2"]["decision"] == "dispatch"
+    assert routes["Ri2"]["agent"] is not None
+
+    host_batch_refs = [
+        ref
+        for ref in payload["dispatch_refs"]
+        if routes[ref]["decision"] == "dispatch" and routes[ref]["agent"] is not None
+    ]
+    assert host_batch_refs == ["Ri1", "Ri2"]
+
+
 def test_dependency_contract_errors_stay_local_to_bad_refs(tmp_path: Path) -> None:
     tasks = """## Active Task Registry
 
@@ -2762,7 +2897,7 @@ def write_apply_wave_contract(tmp_path: Path, count: int = 3) -> None:
     write_thin_retention_decision(tmp_path)
 
 
-def test_allowed_parallel_applies_limits_dispatch_without_truncating_wave(
+def test_apply_remaining_is_per_ref_and_limits_dispatch_without_truncating_wave(
     tmp_path: Path,
 ) -> None:
     write_apply_wave_contract(tmp_path)
@@ -2772,12 +2907,19 @@ def test_allowed_parallel_applies_limits_dispatch_without_truncating_wave(
     loop_path = tmp_path / "openspec" / "changes" / "demo" / "loop.json"
     config = json.loads(loop_path.read_text(encoding="utf-8"))
     config["budgets"]["revision"]["max_iterations"] = 1
+    config["budgets"]["change"]["max_iterations"] = 1
     loop_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
     limited = run_loop_direct(tmp_path, "plan", "demo")
     assert limited["selected_wave"] == ["R1", "R2", "R3"]
-    assert limited["allowed_parallel_applies"] == 1
-    assert limited["dispatch_refs"] == ["R1"]
+    assert limited["apply_remaining"] == 3
+    assert limited["allowed_parallel_applies"] == 3
+    assert limited["dispatch_refs"] == ["R1", "R2", "R3"]
+    assert "revision_apply_iterations_remaining" not in limited
+    assert "change_apply_iterations_remaining" not in limited
+    cleaned = read_config(tmp_path)
+    assert "max_iterations" not in cleaned["budgets"]["revision"]
+    assert "max_iterations" not in cleaned["budgets"]["change"]
 
     run_loop_direct(
         tmp_path,
@@ -2798,11 +2940,32 @@ def test_allowed_parallel_applies_limits_dispatch_without_truncating_wave(
         "--evidence",
         "inspect:R1",
     )
+    run_loop_direct(
+        tmp_path,
+        "record",
+        "demo",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--result",
+        "completed",
+        "--attempt-id",
+        "attempt-r1-second",
+        "--role-id",
+        "implementer",
+        "--changed-file",
+        "src/ref1.py",
+        "--evidence",
+        "inspect:R1:second",
+    )
     exhausted = run_loop_direct(tmp_path, "plan", "demo")
-    assert exhausted["apply_remaining"] == 0
     assert exhausted["selected_wave"] == ["R1", "R2", "R3"]
-    assert exhausted["allowed_parallel_applies"] == 0
-    assert exhausted["dispatch_refs"] == []
+    assert exhausted["apply_remaining"] == len(exhausted["dispatch_refs"])
+    assert exhausted["allowed_parallel_applies"] == 2
+    assert exhausted["dispatch_refs"] == ["R2", "R3"]
+    assert "revision_apply_iterations_remaining" not in exhausted
+    assert "change_apply_iterations_remaining" not in exhausted
 
 
 def test_apply_identity_is_one_supervisor_record_per_ref_attempt(
@@ -3091,7 +3254,7 @@ def test_retry_ownership_keeps_transient_retries_inside_one_apply_attempt(
         "2",
     )
     summary = run_loop_direct(tmp_path, "summary", "demo", "--run-id", "retry-run")
-    assert summary["revision_apply_iterations_used"] == 1
+    assert summary["revision_attempt_count"] == 1
     latest = summary["latest_attempt"]
     assert latest["transient_retries"] == 2
     assert latest["auto_redispatch"] is False
@@ -3150,9 +3313,10 @@ def test_zero_apply_actions_use_no_apply_budget_or_scheduling_headcount(
             result,
             "--subagent-id",
             f"trace-{kind}",
-        )
+    )
     summary = run_loop_direct(tmp_path, "summary", "demo", "--run-id", "zero-run")
-    assert summary["revision_apply_iterations_used"] == 0
+    assert summary["revision_attempt_count"] == 4
+    assert summary["change_attempt_count"] == 4
     assert all(
         item["consumes_apply_attempt"] is False
         and item["consumes_scheduling_headcount"] is False
@@ -3194,8 +3358,7 @@ def test_zero_apply_actions_use_no_apply_budget_or_scheduling_headcount(
         "inspect:R2",
     )
     direct = run_loop_direct(tmp_path, "summary", "demo", "--run-id", "direct-run")
-    assert direct["revision_apply_iterations_used"] == 1
-    assert direct["latest_attempt"]["role_id"] == "rose"
+    assert direct["latest_attempt"]["role_id"] == "zpy"
     assert direct["latest_attempt"]["consumes_scheduling_headcount"] is False
 
 
@@ -3558,17 +3721,18 @@ def test_apply_revision_refuses_a_proposal_without_an_executable_test(
     assert (change_dir / "tasks.md").read_bytes() == before
 
 
-def test_apply_revision_reports_change_budget_without_global_hard_ceiling_terminal(tmp_path: Path) -> None:
+def test_apply_revision_ignores_deleted_change_apply_total_keys(tmp_path: Path) -> None:
     ledger = seal_revisable_demo(
         tmp_path,
         "--autonomy",
         "full_auto",
-        "--max-total-iterations",
-        "2",
-        "--hard-ceiling-max-iterations",
-        "2",
     )
     fingerprint = read_config(tmp_path)["contract_fingerprint"]
+    loop_path = tmp_path / "openspec" / "changes" / "demo" / "loop.json"
+    config = read_config(tmp_path)
+    config["budgets"]["change"]["max_iterations"] = 2
+    config.setdefault("hard_ceiling", {})["max_iterations"] = 2
+    loop_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     write_ledger(ledger, [episode(fingerprint, 2)])
     change_dir = tmp_path / "openspec" / "changes" / "demo"
     before = (change_dir / "tasks.md").read_bytes()
@@ -3585,20 +3749,20 @@ def test_apply_revision_reports_change_budget_without_global_hard_ceiling_termin
         ],
     )
 
-    refused = run_loop(
+    applied = run_loop(
         tmp_path,
         "apply-revision",
         "demo",
         "--proposal",
         str(proposal),
-        expected_exit=2,
     )
 
-    assert refused["applied"] is False
-    assert refused["terminal"] is False
-    assert any("change_max_iterations_reached:2" in issue for issue in refused["issues"])
-    assert not any("hard_ceiling_iterations_reached" in issue for issue in refused["issues"])
-    assert (change_dir / "tasks.md").read_bytes() == before
+    assert applied["applied"] is True
+    assert not any("max_iterations_reached" in issue for issue in applied["issues"])
+    assert (change_dir / "tasks.md").read_bytes() != before
+    cleaned = read_config(tmp_path)
+    assert "max_iterations" not in cleaned["budgets"]["change"]
+    assert "max_iterations" not in cleaned.get("hard_ceiling", {})
 
 
 def write_large_registry(tmp_path: Path, task_count: int) -> None:
@@ -3611,17 +3775,16 @@ def write_large_registry(tmp_path: Path, task_count: int) -> None:
     write_contract(tmp_path, "demo", "\n".join(lines) + "\n", base_features(entries))
 
 
-def test_first_seal_scales_the_change_budget_to_task_count(tmp_path: Path) -> None:
+def test_first_seal_scales_change_active_minutes_to_task_count(tmp_path: Path) -> None:
     write_large_registry(tmp_path, 50)
     seal_demo(tmp_path, tmp_path / "test_cache" / "demo" / "loop" / "ledger.json")
 
     config = read_config(tmp_path)
     change = config["budgets"]["change"]
-    assert change["max_iterations"] == 100
     assert change["max_active_minutes"] == 500
     assert change["max_revisions"] == 3
-    assert config["hard_ceiling"]["max_iterations"] > change["max_iterations"]
-    assert config["hard_ceiling"]["max_active_minutes"] > change["max_active_minutes"]
+    assert "max_iterations" not in change
+    assert "hard_ceiling" not in config
     assert run_loop(tmp_path, "check", "demo")["ok"] is True
 
 
@@ -3630,48 +3793,40 @@ def test_first_seal_keeps_a_small_registry_on_the_flat_budget(tmp_path: Path) ->
     seal_demo(tmp_path, tmp_path / "test_cache" / "demo" / "loop" / "ledger.json")
 
     change = read_config(tmp_path)["budgets"]["change"]
-    assert change["max_iterations"] == 20
     assert change["max_active_minutes"] == 360
 
 
-def test_a_confirmed_change_budget_is_never_rescaled(tmp_path: Path) -> None:
+def test_a_confirmed_change_active_minutes_budget_is_never_rescaled(tmp_path: Path) -> None:
     write_large_registry(tmp_path, 50)
     ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
-    seal_demo(tmp_path, ledger, "--max-total-iterations", "5")
-    assert read_config(tmp_path)["budgets"]["change"]["max_iterations"] == 5
+    seal_demo(tmp_path, ledger, "--max-total-active-minutes", "5")
+    assert read_config(tmp_path)["budgets"]["change"]["max_active_minutes"] == 5
 
     run_loop(tmp_path, "seal", "demo", "--confirmed")
-    assert read_config(tmp_path)["budgets"]["change"]["max_iterations"] == 5
+    assert read_config(tmp_path)["budgets"]["change"]["max_active_minutes"] == 5
 
 
-def test_semantic_seal_reports_task_derived_budget_shortfall_without_rescaling(
+def test_semantic_seal_no_longer_reports_task_derived_apply_shortfall(
     tmp_path: Path,
 ) -> None:
     write_large_registry(tmp_path, 12)
     ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
-    seal_demo(tmp_path, ledger, "--max-total-iterations", "24")
+    seal_demo(tmp_path, ledger, "--max-total-active-minutes", "24")
 
     write_large_registry(tmp_path, 19)
     restamped = run_loop(tmp_path, "seal", "demo", "--confirmed")
 
     assert restamped["semantic_change"] is True
-    assert restamped["budget_advisories"] == [
-        {
-            "field": "budgets.change.max_iterations",
-            "configured": 24,
-            "recommended": 38,
-            "shortfall": 14,
-        }
-    ]
-    assert read_config(tmp_path)["budgets"]["change"]["max_iterations"] == 24
+    assert restamped["budget_advisories"] == []
+    assert read_config(tmp_path)["budgets"]["change"]["max_active_minutes"] == 24
 
 
-def test_semantic_reseal_reports_the_same_non_mutating_budget_advisory(
+def test_semantic_reseal_no_longer_reports_apply_shortfall_advisories(
     tmp_path: Path,
 ) -> None:
     write_large_registry(tmp_path, 12)
     ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
-    seal_demo(tmp_path, ledger, "--max-total-iterations", "24")
+    seal_demo(tmp_path, ledger, "--max-total-active-minutes", "24")
 
     write_large_registry(tmp_path, 19)
     restamped = run_loop(
@@ -3683,15 +3838,8 @@ def test_semantic_reseal_reports_the_same_non_mutating_budget_advisory(
     )
 
     assert restamped["semantic_change"] is True
-    advisory = restamped["budget_advisories"][0]
-    assert advisory == {
-        "field": "budgets.change.max_iterations",
-        "configured": 24,
-        "recommended": 38,
-        "shortfall": 14,
-    }
-    assert "basis" not in advisory
-    assert read_config(tmp_path)["budgets"]["change"]["max_iterations"] == 24
+    assert restamped["budget_advisories"] == []
+    assert read_config(tmp_path)["budgets"]["change"]["max_active_minutes"] == 24
 
 
 def write_mixed_registry(tmp_path: Path, passed: int, pending: int) -> None:
@@ -3711,14 +3859,14 @@ def test_restamp_does_not_warn_when_remaining_work_fits(
 ) -> None:
     write_large_registry(tmp_path, 12)
     ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
-    seal_demo(tmp_path, ledger, "--max-total-iterations", "24")
+    seal_demo(tmp_path, ledger, "--max-total-active-minutes", "24")
 
     write_mixed_registry(tmp_path, passed=13, pending=6)
     restamped = run_loop(tmp_path, "seal", "demo", "--confirmed")
 
     assert restamped["semantic_change"] is True
     assert restamped["budget_advisories"] == []
-    assert read_config(tmp_path)["budgets"]["change"]["max_iterations"] == 24
+    assert read_config(tmp_path)["budgets"]["change"]["max_active_minutes"] == 24
 
 
 def test_ledger_lineage_names_the_episode_an_amendment_continues(
