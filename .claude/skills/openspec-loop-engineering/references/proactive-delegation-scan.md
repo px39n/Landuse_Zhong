@@ -24,7 +24,7 @@ Record all four fields:
 matched_role_id: <canonical role id> | null
 decision: direct | dispatch | blocked
 direct_reason: trivial_work | clarification_or_split | no_matching_specialist | capability_failure | overlap | negative_benefit | N/A
-effective_role_id: <canonical role id or rose> | N/A
+effective_role_id: <canonical role id or local zpy> | N/A
 ```
 
 `general` is never emitted.
@@ -46,8 +46,10 @@ effective_role_id: <canonical role id or rose> | N/A
    - `capability_failure`
    - `overlap`
    - `negative_benefit`
-5. A permitted `direct` package uses `effective_role_id: rose` and remains
-   supervisor-owned.
+5. A permitted new `direct` package uses local `effective_role_id: zpy` and
+   remains supervisor-owned with `agent=null`. Explicit `rose` is accepted only
+   as predecessor/history or bounded bootstrap input and is never a new inferred
+   output.
 6. Missing authority or missing effective capability remains `blocked`; it must
    not be converted into a direct exception.
 
@@ -56,6 +58,9 @@ effective_role_id: <canonical role id or rose> | N/A
 - `dispatch` creates exactly one logical `agents/<agent-id>` envelope in
   `handoff.json.dispatches[]`.
 - `direct` creates no agent envelope.
+- Native hosts derive
+  `host_batch_refs = dispatch_refs where routing.decision == dispatch and agent != null`.
+  Raw `dispatch_refs` membership never makes a direct `zpy|rose` ref spawnable.
 - This scan does not dispatch by itself, does not Verify, does not promote, and does not issue PASS.
 
 ## Re-scan boundary

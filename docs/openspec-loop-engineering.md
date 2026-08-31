@@ -23,9 +23,29 @@
 | 专项审查 | `review-pipeline` | 用户点名或一个残余风险的一次只读审查 | review swarm、PASS |
 | 全量审计 | `monitor-openspec-codex` | 仅在 `retention=full` 或 legacy audit 时写 bundle | 普通 Loop 默认路径 |
 
-`rose` 只是 supervisor-direct 的兼容 Role ID 别名，不是可部署 worker，也不新增
-宿主。canonical Role ID 只选择最窄能力；没有合适角色时保持 direct 或明确
-`blocked`，不得用 `general` 假装拥有任务。
+upstream canonical `rose` 只保留 GitHub provenance 与 legacy/bootstrap input。
+本地 supervisor-direct 的 machine Role ID 是小写 `zpy`（展示 `ZPY`），始终
+non-deployable、`agent=null`、零调度人头；标签本身不提供认证或 authority。
+canonical Role ID 只选择最窄能力；没有合适角色时保持 direct 或明确 `blocked`，
+不得用 `general` 假装拥有任务。
+
+### 1.1 `e2e-host` 原子对齐索引
+
+下表把 public guide 的每个 harness 原子义务连到当前 source、runtime 与 test。
+状态为“对齐”只表示这些锚点在当前工作树一致，不替代 task/whole-change Verify。
+
+| 原子义务 | Change / source authority | Runtime / skill surface | Mechanical evidence | Guide owner | 状态 |
+|---|---|---|---|---|---|
+| local `zpy` / upstream `rose` | `e2e-host` MODIFIED Requirement | `openspec_loop.py` local role constants；role adapter/scan | `test_local_zpy_direct_role_preserves_legacy_rose_bootstrap`；`test_local_zpy_supervisor_role_keeps_upstream_rose_provenance` | §1、§2.2、§3.3 | 对齐 |
+| R1 bootstrap → R2/R3 local role | `e2e-host/tasks.md` R1-R3 | explicit legacy `rose` input；new direct output `zpy` | task states + local-role tests | §3.3 | 对齐 |
+| `dispatch_refs` / `host_batch_refs` | Native-host requirement | plan `routing[]` + host-side filter | `test_dispatch_refs_keep_direct_zpy_refs_out_of_host_batch` | §3.2、§2.3 | 对齐 |
+| one-shot → `supervisor_join` | One-shot Apply requirement | Apply skill + packet/result references | `test_one_shot_host_batch_returns_supervisor_join` | §3.3、§2.3 | 对齐 |
+| no resume / no automatic lane | packet/result MUST NOT | `Task.resume` / `resume_agent` forbidden | static handoff contract test | §3.3 | 对齐 |
+| single authority writer | sole-supervisor requirement | `gate` / `record` / join / Verify / promote / reseal / sync | Loop authority and join tests | §3.3、§2.4 | 对齐 |
+| in-process ref-local unblock | blocked/deviated requirement | unblock skill，spawn=0 | `test_unblock_host_policy_is_in_process_and_ref_local` + ref-local runtime tests | §3.4、§2.3 | 对齐 |
+| transmission byte proxy | native-host requirement | static UTF-8 JSON projection only | `test_static_handoff_dispatches_only_spawnable_packets` | §3.3 | 对齐 |
+| canonical/mirror ownership | R3 ACCEPT | `.agents` → sync script → `.codex/.claude` | byte-exact sync tests | §2.1、§2.3 | 对齐 |
+| G1 / design close | `tasks.md` G1 | `goals` + `design-verify --observation` | G1 observation + whole-change verification | §7、§2.3 | 对齐 |
 
 ## 2. Skill tree map
 
@@ -37,7 +57,7 @@
 ├─ openspec-feature-list/               # tasks -> compact active registry
 ├─ openspec-loop-engineering/           # 唯一 supervisor
 │  └─ references/
-│     ├─ canonical-roles.json           # 21 个 Role ID；rose 仅为 supervisor 别名
+│     ├─ canonical-roles.json           # 21 个 upstream Role ID；rose 保留 provenance
 │     ├─ role-adapter-matrix.md          # Role ID -> 本地入口与写权限
 │     ├─ subagent-task-packet.md         # 一个有界 dispatch envelope
 │     └─ subagent-result.md              # terminal result；无最终 PASS 权限
@@ -51,6 +71,25 @@ scripts/sync_openspec_loop_skills.py     # 只做受管语义文件同步
 ├─ .codex/skills/                        # 机械镜像；保留平台 metadata
 └─ .claude/skills/                       # 机械镜像；保留平台 metadata
 ```
+
+Change-local 与 runtime 文件的职责也必须分开：
+
+```text
+openspec/changes/<change-id>/
+├─ proposal.md / design.md / specs/** / tasks.md  # 人读 operative contract
+├─ interview.md                                    # 唯一 change-local interview 决策面
+├─ feature_list.json                               # compact task state
+├─ loop.json                                       # fingerprint、policy、paths、budgets
+└─ handoff.json                                    # 可选协调面；direct ref 不创建 agent row
+
+loop.json.paths.ledger
+└─ test_cache/<change-id>/loop/ledger.json         # thin 默认 authority ledger；非第二 spec
+```
+
+`interview.md` 是 interviewer 的正式 change-local 工件；`handoff.json` 仍是按需创建的
+advisory coordination metadata。唯一 authority ledger 的字面路径来自
+`loop.json.paths.ledger`，thin 默认展开为
+`test_cache/<change-id>/loop/ledger.json`；worker/host 不写它。
 
 修改 canonical skill 后只走这一条同步链：
 
@@ -69,7 +108,7 @@ explore -> new|continue|ff -> change-interviewer -> feature-list
 tasks + feature_list.json + loop.json
   -> loop-engineering (sole supervisor)
      -> proactive scan
-        -> direct: rose (non-deployable alias)
+        -> direct: zpy (local, non-deployable, agent=null)
         -> dispatch: apply-change -> result -> actual-dispatch join
                     -> verify-change -> promote
      -> BLOCKED|DEVIATED -> unblock-research
@@ -89,6 +128,99 @@ tasks + feature_list.json + loop.json
 
 `handoff.json` 是 change 内唯一 worker 协调面。`agents/<agent-id>` 是 packet 中的
 逻辑地址，不是仓库目录、skill、slash command 或持久 agent 生命周期。
+
+### 2.3 Harness graph：workflow、skill 与 host tool 流
+
+下图只表达仓库当前已经存在的 authority 和 adapter boundary。`host_batch_refs` 是
+native host 从 plan payload 派生的集合；helper 并没有额外的 host-batch runtime
+object。direct `zpy` 与 host packet 最终都回到同一个 supervisor。
+
+```mermaid
+flowchart TD
+  U["User intent / accepted amendment"] --> I["$openspec-change-interviewer"]
+  I --> C["proposal + design + specs + tasks + interview"]
+  C --> F["$openspec-feature-list / generate feature_list.json"]
+  F --> CP["openspec validate + loop check / plan"]
+  CP --> S["proactive scan -> routing[] + dispatch_refs"]
+  S --> D{"routing.decision"}
+
+  D -->|"direct"| Z["local zpy supervisor\nagent=null / spawn=0"]
+  D -->|"dispatch and agent!=null"| HF["derive host_batch_refs"]
+  HF --> HB["one native host batch\nshared context once"]
+  HB --> PK["fresh one-shot packet / ref"]
+
+  Z --> AP["$openspec-apply-change\nin-process boundary"]
+  PK --> AP
+  AP --> TR["terminal result\nNEXT: supervisor_join"]
+  TR --> REC["sole supervisor record apply -> ledger.json"]
+  REC --> J["join barrier over this wave's dispatch_refs results"]
+  J --> ST{"terminal status"}
+
+  ST -->|"completed + evidence"| V["$openspec-verify-change"]
+  V -->|"PASS"| P["promote -> re-plan"]
+  V -->|"FAIL"| FX["one scoped repair / disposition"]
+  ST -->|"BLOCKED or DEVIATED"| UB["$openspec-unblock-research\nin-process / spawn=0"]
+  UB -->|"retry"| NG["fresh gate + fresh Apply packet"]
+  UB -->|"targeted_probe"| TP["in-process probe default\noptional one read-only spawn"]
+  UB -->|"amend_spec or supersede_task"| I
+  UB -->|"stop_budget"| RS["stop affected ref only"]
+  NG --> CP
+  TP --> ST
+  P --> CP
+
+  CP -->|"no ready refs"| G["goals"]
+  G --> DV["design-verify --observation"]
+  DV -->|"PASS"| FV["whole-change Verify\nmirror check + adjacent tests + strict validate"]
+  DV -->|"GAP"| I
+
+  C -. "canonical skill edit" .-> AS[".agents/skills"]
+  AS --> SY["sync_openspec_loop_skills.py"]
+  SY --> MC[".codex/skills"]
+  SY --> MH[".claude/skills"]
+
+  REC -.-> L[("test_cache/.../loop/ledger.json")]
+  DV -.-> O[("disposable goal observation")]
+  UB -. "direction-changing only" .-> UR[("change-local unblock report")]
+```
+
+纯文本等价流，供不渲染 Mermaid 的 preview 使用：
+
+```text
+interviewer
+  -> proposal/design/specs/tasks/interview
+  -> feature_list -> validate -> check/plan -> routing[] + dispatch_refs
+     ├─ direct zpy (agent=null) -------------------------------┐
+     └─ filter decision=dispatch && agent!=null                |
+        -> host_batch_refs -> one host batch -> one-shot packet|
+                                                               v
+                apply-change -> terminal result -> supervisor_join
+                  -> supervisor record(apply) -> join
+                     ├─ completed -> verify -> PASS -> promote -> re-plan
+                     └─ BLOCKED|DEVIATED -> in-process unblock
+                          ├─ retry -> fresh gate/packet
+                          ├─ targeted_probe -> in-process default
+                          ├─ amend/supersede -> interviewer/reseal
+                          └─ stop_budget -> affected ref only
+  -> no ready refs -> goals -> design-verify(observation)
+     -> whole-change verify + mirror check + strict validate
+```
+
+### 2.4 Skill → tool → artifact 原子调用表
+
+| 阶段 | Skill / capability | Tool 或 CLI | 读取的 authority | 产出 / 写者 | 下一步 |
+|---|---|---|---|---|---|
+| 合同修订 | `$openspec-change-interviewer` | `openspec validate`、feature generator、confirmed semantic `reseal` | proposal/design/specs/tasks + user decision | contract、`interview.md`、registry/fingerprint；interviewer/supervisor 写 | `check/plan` |
+| 完整性锁 | `$openspec-loop-engineering` | `check`、`plan --batch` | `tasks.md`、`feature_list.json`、`loop.json` | census、wave、`routing[]`、`dispatch_refs`；helper 计算 | proactive scan |
+| direct 分支 | local `zpy` | same-process Apply boundary | direct route、scope、gate | 无 agent envelope；terminal result | supervisor record/join |
+| host 分支 | Codex/Cursor native adapter | filter `host_batch_refs`，fresh Task/spawn | 仅 `decision=dispatch && agent!=null` routes | 一个 batch、每 ref 一个 packet/result；host 写 result，不写 ledger | `supervisor_join` |
+| Apply | `$openspec-apply-change` | scoped edit + focused owner check | 一个 ref/attempt packet | changed files + terminal result；worker/direct Apply | supervisor `record` |
+| Authority close | sole Loop supervisor | `record`、join、`gate --kind verify` | terminal results + current fingerprint | `ledger.json`、join state；仅 supervisor 写 | task Verify |
+| Task Verify | `$openspec-verify-change --task` | task 完整 `TEST:` | ACCEPT、result evidence、join | `PASS|FAIL|BLOCKED|DEVIATED`；verifier judgement | promote 或 disposition |
+| 偏离诊断 | `$openspec-unblock-research` | in-process probe，默认 `return_only` | expected/observed + ref-local counters | disposition；仅改变方向时写 `unblock/` | retry / interviewer / ref stop |
+| Task state | Loop supervisor | `promote` / `sync` | verifier PASS / compact index | checkbox + feature state；原子 transition | re-plan |
+| Design close | Loop supervisor + verifier | `goals`、`design-verify --observation` | GOAL/COVERED_BY + disposable observation | `PASS|GAP`；不凭 task checkbox 推断 | final Verify 或 interviewer |
+| Mirror | canonical `.agents` source | `sync_openspec_loop_skills.py [--check]` | `.agents/skills/**` | `.codex/.claude` mirrors；不生成 `.cursor` projection | behavior tests |
+| Final | whole-change verifier | adjacent pytest + mirror check + strict validate | passed refs + design PASS | final verdict/evidence；不新增 Apply | archive decision |
 
 ## 3. 核心设计机制
 
@@ -112,8 +244,8 @@ change 已记录的 `thin` retention/path decision 与仓库有限默认自动�
 自动初始化只写 policy file，不创建 ledger、scratch、cache、product、bundle 或
 GUI/Colab 目录，也不授权不可逆操作。第一次 Apply 因此不需要 stamp。
 
-只有以下不可逆政策需要人类明确确认：提高 legacy `hard_ceiling`，改变 retention、
-paths 或 scope，破坏性外部写入，凭据，产品 `--commit`，以及 `git push`、PR 或
+只有以下不可逆政策需要人类明确确认：提高已记录的可选 `hard_ceiling`，改变
+retention、paths 或 scope，破坏性外部写入，凭据，产品 `--commit`，以及 `git push`、PR 或
 `main` 操作。`seal-preview.md` 可在这条分支上作为 change-scoped 可选审计诊断，
 不能反过来成为第二次开工仪式。
 
@@ -125,9 +257,19 @@ paths 或 scope，破坏性外部写入，凭据，产品 `--commit`，以及 `g
 |---|---|---|
 | `selected_batch` | dependency-ready 的完整普查集 | 依赖、环、局部合同错误、终态 |
 | `selected_wave` | 通过四问后的完整写范围独立 Apply 集 | 写范围重叠、包不合格、无稳定 join |
-| `apply_remaining` | 当前实际派出的 Apply 余量 | 已记录 Apply 使用量及现有有限预算 |
+| `apply_remaining` | `selected_wave` 内 per-ref Apply 余量仍为正的 ref 数 | 各 ref 的 `max_apply_attempts` 与已记录 Apply 使用量 |
 | `allowed_parallel_applies` | `min(|selected_wave|, apply_remaining)` | 只由上述两项计算 |
-| `dispatch_refs` | 本轮实际可派出的确定性前缀 | allowance、iteration/minutes/breakers、写拓扑 |
+| `dispatch_refs` | 本轮实际可派出的确定性顺序 | per-ref allowance、可选 active minutes/breakers、写拓扑 |
+
+`dispatch_refs` 同时容纳 supervisor-direct 与可 spawn refs。native host 必须再派生：
+
+```text
+host_batch_refs =
+  dispatch_refs where routing.decision == dispatch and agent != null
+```
+
+direct `zpy|rose` ref 即使位于 `dispatch_refs` 也留在 supervisor 本进程；一波最多
+一个 native host batch，每个 `host_batch_ref` 最多一个 fresh one-shot packet。
 
 每个候选包进入 `selected_wave` 前回答四问：
 
@@ -158,7 +300,35 @@ task 或宣称 PASS。
 
 terminal result 返回后，只有 supervisor 写该 ref/attempt 的一条 canonical Apply
 record；重复 `attempt_id` 被拒绝。Goal、stop hook、只读研究/审查、supervisor
-Verify、`rose` direct routing 和 Verify 内的证据写入都是 0 Apply、0 调度人头。
+Verify、`zpy` direct routing、explicit legacy `rose` bootstrap 和 Verify 内的证据
+写入都是 0 Apply、0 调度人头。
+
+Happy-path transport seam 必须逐字一致：每个 native host packet 使用 fresh one-shot
+task/thread；terminal result 关闭上下文并返回 `NEXT: supervisor_join`，不得返回
+`NEXT: verify`。`Task.resume`、`resume_agent`、continuation 字段，以及 implementation
+完成后自动追加 review/test/security/coverage/Verify lane 都被禁止。Loop 自己复用
+supervisor `run_id` 只是 ledger lineage，不等于恢复 host task/thread。
+
+只有 sole supervisor 可以调用 `gate`、写 `record(apply|unblock)`、关闭 join、启动
+Verify、`promote`、`reseal` 与 `sync`。worker、native host、result、handoff row 与
+unblock disposition 都只是输入；它们不能写 `ledger.json`、task/feature state、第二
+ledger、Board 或 `progress.txt`。本合同不引入 ledger CAS/lock；single-process
+authority 与 cross-process locking 是两个不同问题。
+
+传输效率使用稳定的 UTF-8 JSON 代理，不读取 provider-specific token API：
+
+```text
+transmission_bytes =
+  shared_context_bytes + Σpacket_delta_bytes + Σresult_bytes
+```
+
+静态投影只把 fingerprint、join id 与 write-disjoint 声明计入一次 shared context；
+packet/result 部分只计 ref-local 投影。这个公式是 evaluation proxy，不是新的 delta
+encoding protocol，也不表示 helper 已经拥有 host-batch runtime object。
+
+迁移顺序是兼容事实，不是当前分支：R1 曾以 explicit legacy `rose` bootstrap local
+`zpy` support；R2/R3 及之后的新 direct output 使用 `zpy`。任何新任务不得因这段
+历史说明重新发射 `rose`。
 
 写权限按最窄 Role ID 固定：`implementer` 只写 task-owned 产品/合同文件，
 `test-engineer` 只写 task-owned 测试，`browser-qa-runner` 与
@@ -178,13 +348,31 @@ Verify、`rose` direct routing 和 Verify 内的证据写入都是 0 Apply、0 �
 - **worker 内部重试（允许）**：terminal result 前的瞬时工具/进程故障；packet
   不变，仍是一轮 Apply；
 - **supervisor 新 Apply（允许但过 gate）**：旧结果完成处置后，只有 gate、
-  `max_apply_attempts` 和现有预算允许，才创建新 packet/attempt；
+  该 ref 的 `max_apply_attempts`、已激活的 `max_unblock_runs`、可选 active minutes
+  与 breakers 允许，才创建新 packet/attempt；
 - **自动再派（禁止）**：terminal `failed|empty|partial|blocked|unverified` 不得自动
   续跑、换 worker、扩 scope 或恢复旧上下文。
 
 断言失败、语义错误或 packet 的 Role/ref/scope/write scope/permission/acceptance
 boundary 改变，都不是瞬时重试。unblock 可以建议 `retry | targeted_probe |
-amend_spec | supersede_task | stop_budget`，但不自行 dispatch。
+amend_spec | supersede_task | stop_budget`，但由 supervisor 本进程以 spawn=0 调用，
+不恢复失败 Apply，也不自行 dispatch 或追加 explorer/mapper/verifier/review lane。
+
+Unblock host coupling 不能只写成抽象 disposition：
+
+| Disposition | 唯一可执行动作 | Spawn / join | 明确禁止 |
+|---|---|---|---|
+| `retry` | supervisor 重新过 ordinary gate，创建 fresh Apply packet | 默认 0；later Apply 走正常 host filter | resume 失败 packet/thread、补 quota |
+| `targeted_probe` | 默认本进程执行一个 discriminating probe | 仅 scan row 记录 wall-clock benefit 时允许一个 read-only spawn，immediate join，no Verify | 自动 scout wave、实现修复 |
+| `amend_spec|supersede_task` | 回 interviewer 或 authorized supervisor semantic reseal | 0 | worker 改 spec、重置 counters |
+| `stop_budget` | 只停止受影响 ref | 0 | 冻结 siblings、购买第三 research agent |
+
+Loop-light profile 固定为 `return_only`、最多 4 tool calls、4 evidence items、180s，
+每 ref 每 fingerprint 最多两次 unblock。第一次是 repair decision；第二次必须有
+completed second Apply 且 failure fingerprint 不同或出现新 discriminating evidence，
+在默认两次 Apply 下只能给 `amend_spec|supersede_task|stop_budget`，不能再开 research
+swarm。只有 direction change、durable blocker、task supersession 或用户明确要求时，
+才把报告写入 change-local `unblock/`；routine result 不落盘。
 
 ### 3.5 Retention：策略、动态账本与产品证据分离
 
@@ -239,24 +427,33 @@ feature state 和新 plan。
 
 ## 5. 有限预算、breaker 与局部耗尽
 
-从 `loop.json` 读取有限预算，不因新 session、run id 或 revision 静默重置。
+从 `loop.json` 读取有限的 per-ref allowance 与可选 runtime breaker，不因新 session、
+run id 或 revision 静默重置。
 `revision_attempt_count` / `change_attempt_count` 可以包含 Apply、Verify、Explore、
-Unblock 等记录，不能拿来冒充 Apply 使用量；读取 summary 的
-`revision_apply_iterations_*` 和 `change_apply_iterations_*` 字段。
+Unblock 等记录，不能拿来冒充 Apply 使用量。聚合 Apply 计数字段
+`budgets.revision.max_iterations`、`budgets.change.max_iterations`、
+`hard_ceiling.max_iterations` 以及 summary 的 revision/change Apply
+used/remaining 输出都已删除；若旧 `loop.json` 仍带这些键，只允许在下一次
+`check`、`plan` 或 `reseal --migrate` 时单向删掉，不能喂给 `apply_remaining`
+或 Apply gate。
+
+Apply 次数权威只有各 ref 的 `max_apply_attempts`，以及该 ref 进入
+`blocked|deviated` 后才激活的 `max_unblock_runs`。`apply_remaining` 等于当前
+`selected_wave` 中 per-ref Apply 余量仍为正的 ref 数；任何已删除的聚合旧键都不得
+重新生成 `*_max_iterations_reached`、减少该计数或饿死另一个独立 ready ref。
 
 每个 ref 的 `max_unblock_runs=2` 在它进入 `blocked|deviated` 前休眠。激活后耗尽只把
 该 ref 标成 `maxed|stop_budget`，不得清空 `selected_wave` 或阻止其他独立 ready
 Apply。提高已激活的 ref-local unblock allowance 需要适用 authority 和记录 reason；
 stamp 不能给已耗尽 ref 续命。
 
-revision/change Apply remainder 只限制实际 `dispatch_refs`。现有 iteration、active
-minutes 与 breakers 可以暂停实际派出，但不把 headcount 或 legacy ceiling 变成新
-调度器。常见 breaker 包括重复 result fingerprint、连续 no-progress 和重复 semantic
-deviation。
+可选 active minutes 与 breakers 可以暂停实际派出，但 revision/change iteration、
+headcount 或 legacy ceiling 都不能变成调度器。常见 breaker 包括重复 result
+fingerprint、连续 no-progress 和重复 semantic deviation。
 
-legacy `hard_ceiling` 保留为兼容/诊断 policy data：它不是普通 dispatch stop，也不
-过滤 `selected_wave` 或消费 `apply_remaining`。Loop 不得自行提高它；提高该字段与
-改变 retention、paths、scope 一样，属于不可逆政策人章范围。不要把“不得因
+legacy `hard_ceiling` 只剩可选的 minutes/self-extension policy data：它不是普通
+dispatch stop，也不过滤 `selected_wave` 或消费 `apply_remaining`，更不是普通开工
+authority；提高该可选 policy ceiling 仍需人类明确确认。不要把“不得因
 `hard_ceiling` 阻止普通 dispatch”误读成任何门闸都不能拦——fingerprint、未确认的
 不可逆政策、现有工作预算、breakers 与写拓扑仍然有效。
 
@@ -295,9 +492,10 @@ python scripts/openspec_loop.py check <change-id>
 
 ### 6.2 每波 drain loop
 
-1. `plan`：保存完整 `selected_batch`，按四问形成 `selected_wave`，只派
-   `dispatch_refs`。
-2. 为每个实际 Apply 创建 fresh packet；packet 只缩小 authority。
+1. `plan`：保存完整 `selected_batch`，按四问形成 `selected_wave`，只 Apply
+   `dispatch_refs`；native host 仅消费过滤后的 `host_batch_refs`。
+2. 为每个 `host_batch_ref` 创建 fresh packet；direct refs 保持本进程且不创建 agent
+   envelope。packet 只缩小 authority。
 3. worker Apply 并返回结构化 terminal result；worker 不写账本。
 4. supervisor 为每个 ref/attempt 写唯一 Apply record。
 5. 同 worktree 的实际派出成员全部 join，关闭 wave barrier。
@@ -317,7 +515,7 @@ python scripts/openspec_loop.py plan <change-id> --batch
 python scripts/openspec_loop.py summary <change-id> --run-id <run-id>
 ```
 
-恢复时复用 recorded paths、fingerprint 与累计预算。出现漂移时按第 4 节处置，
+恢复时复用 recorded paths、fingerprint、per-ref counters 与可选 runtime 状态。出现漂移时按第 4 节处置，
 不要顺手修合同或从旧 appendix 重新选择废弃任务。runtime 中仍含 `sealed` 输出键或
 “re-run interviewer and seal”等 legacy naming，不得重新解释为 stamp authority。
 
@@ -348,6 +546,13 @@ proposal；`supervised` 交回 interviewer，`full_auto` 可在 authority 内记
 后修订并重新排水，但 autonomy 不得制造空合同。只有 design PASS 后才运行
 whole-change Verify 和 strict validate。
 
+原子收口还要求：registry 完全没有 `GOAL:` 时，`design-verify` 必须返回
+`the registry declares no design goal` 的 GAP；每条 `COVERED_BY` 应覆盖它声称的全部
+live refs，`uncovered_goals=[]` 与 `orphan_refs=[]` 才是干净的 structural close。
+Observation 的 `status` 只能是 `match|mismatch`，应引用已经执行过的 tests/commands；
+普通 thin workflow 可把它写入 recorded disposable root，不得为了 design seal 自动
+创建 `auto_test_openspec/` full bundle。
+
 ## 8. 最佳实践
 
 1. **先看五个 plan 字段再派工。** 不把 `selected_batch`、`selected_wave`、
@@ -356,9 +561,9 @@ whole-change Verify 和 strict validate。
    保守串行或 direct，不能用 ref 名猜测不相交。
 3. **packet 小而完整。** 一个 packet 只含一个 ref/attempt，并写清 forbidden scope、
    acceptance boundary、expected evidence 与 join id。
-4. **只等待实际派出。** 共享树 join 等 `dispatch_refs`，不是等待
-   `selected_wave` 尾部；Verify 仍按 ref 判定，不把 sibling failure 扩大为
-   change-wide failure。
+4. **只等待实际 Apply。** 共享树 join 等本轮 `dispatch_refs` 的 terminal results；
+   其中 native host 只收到 `host_batch_refs`，direct refs 由 supervisor 本进程完成。
+   不等待 `selected_wave` 尾部；Verify 仍按 ref 判定。
 5. **让失败保持局部。** blocker、未知依赖、unblock 耗尽和非 PASS 默认只影响当前
    ref；继续排空其他独立 ready。
 6. **区分 retry 主人。** worker 只重试瞬时故障；supervisor 只在新 gate 后再派；
@@ -367,10 +572,14 @@ whole-change Verify 和 strict validate。
    ledger、不 promote、不宣称 PASS，也不因 Role ID 获得人数或预算配额。
 8. **默认 thin。** 只保留复现决策所需的 pointers/manifests；不要把完整日志和旧
    spec 堆进 change，也不要每次 attempt 生成 bundle。
-9. **兼容字段只做诊断。** 报告 legacy `sealed`、`hard_ceiling`、`max_subagents` 时
-   明确其兼容性质，不让它们悄悄回到 dispatch gate。
+9. **旧键只许删，不许复活。** legacy `sealed`、`confirmed_at`、`max_subagents`
+   可作为兼容观察值；聚合 Apply 计数字段必须保持缺席，旧 `loop.json` 若带这些键就
+   在 helper 触达时单向删除，不让它们悄悄回到 `apply_remaining` 或 dispatch gate。
 10. **同步和行为测试分开。** canonical skill 修订后先 sync/check，再跑 skill
     contract tests、runtime tests 和 task `TEST:`；三者不可互相替代。
+11. **Autopilot 最后接管。** 只有 Loop 已 drain、design/whole-change verification 已
+    PASS 且已有 draft PR 时，才允许后续 Autopilot；它不参与当前 gate、Apply、join、
+    unblock 或 promotion，也不能成为第三 supervisor。
 
 ### 最小命令闭环
 
@@ -381,14 +590,26 @@ openspec validate <change-id> --strict
 python scripts/openspec_loop.py check <change-id>
 python scripts/openspec_loop.py plan <change-id> --batch
 
-# 只对 dispatch_refs 开 gate；Apply/record 后 join 实际派出成员
+# 只对 dispatch_refs 开 gate；native host 再过滤 host_batch_refs
 python scripts/openspec_loop.py gate <change-id> --run-id <run-id> --ref <ref> --kind apply
 # $openspec-apply-change <change-id> --task <ref> --orchestrated
-# supervisor records the one Apply result, then actual-dispatch join closes
+python scripts/openspec_loop.py record <change-id> --run-id <run-id> --ref <ref> `
+  --kind apply --result completed --record-owner supervisor `
+  --attempt-id <attempt-id> --packet-id <packet-id> --role-id <role-id> `
+  --join-id <join-id> --wave-ref <ref> --evidence <pointer>
+# supervisor records exactly one Apply result, then the actual-wave join closes
 
 # Ref-level acceptance and atomic promotion
+python scripts/openspec_loop.py gate <change-id> --run-id <run-id> --ref <ref> --kind verify
 # $openspec-verify-change <change-id> --task <ref>
 python scripts/openspec_loop.py promote <change-id> --ref <ref>
+
+# BLOCKED|DEVIATED: supervisor invokes in-process; the skill only returns disposition
+# $openspec-unblock-research <change-id>
+
+# Design-level and whole-change close
+python scripts/openspec_loop.py goals <change-id>
+python scripts/openspec_loop.py design-verify <change-id> --observation <disposable-json>
 
 # 仅在 compact index 漂移时修复 index；最终再做严格验证
 python scripts/openspec_loop.py sync <change-id>
@@ -407,7 +628,8 @@ promotion。每轮实际派出仍以新 `plan.dispatch_refs` 为准。
 - terminal semantic failure 后自动再派、换人重跑、扩 scope 或恢复旧上下文；
 - 全 change 停工等待一个不相关 ref，或 Verify 前等待未来所有 wave；
 - 让 Apply/review host 自行 Verify、promote、写 PASS 或创建第二账本；
-- 把 `rose`、delivery-flow、Board、A33 或 provider agent 文件变成运行时 supervisor；
+- 把 upstream `rose`、delivery-flow、Board、A33 或 provider agent 文件变成新的运行时
+  supervisor，或把 local `zpy` 变成 deployable/authentication role；
 - 用 stamp 重置 ref-local Apply/unblock exhaustion；
 - 把 fingerprint latch 放宽成“任何 gate 都不得阻止 dispatch”；
 - 新 session、run id 或 revision 静默重置累计预算；

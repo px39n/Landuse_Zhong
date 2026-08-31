@@ -30,7 +30,6 @@ skipped_checks:
 blockers:
 risks:
 unverified:
-continuation_recommendation: same-package | new-package | none
 findings:
 ```
 
@@ -55,13 +54,14 @@ verification:
   dispatch packet.
 - Portable evidence is required. An opaque runtime-private id cannot be the
   only completion proof.
-- `same-package` is valid only when all package-defining fields remain
-  unchanged.
 - Keep raw logs, broad dumps, and full files out of the result.
 - A no-finding result still reports inspected scope, checks, freshness, skipped
   checks, blockers, risks, and `unverified` items.
 - The result does not issue final PASS, acceptance, promotion, or integration.
 - A terminal `failed`, empty, `partial`, `blocked`, or `unverified` result does not authorize automatic redispatch, old-context resume, role swap, or scope expansion.
+- Every result is terminal for its native host task/thread context. It returns
+  only what the supervisor needs for join and later Verify selection, then the
+  context closes; no continuation or resume recommendation is emitted.
 - Semantic check failure is not a transient retry.
 - No result grants permission for another operation, nested delegation, or
   final-verdict ownership.
@@ -74,3 +74,8 @@ verification:
   sidecars, or a second ledger.
 - Do not duplicate or rebind repository identity, approvals, or command
   authority outside the packet.
+
+For a static transmission-efficiency test, UTF-8 JSON result projections may
+be counted as `result_bytes`. Together with one `shared_context_bytes` value and
+per-ref `packet_delta_bytes`, this is a stable measurement proxy only; it does
+not introduce a delta encoding protocol or a provider-specific token API.

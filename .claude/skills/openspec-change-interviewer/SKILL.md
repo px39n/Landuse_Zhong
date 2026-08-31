@@ -37,7 +37,8 @@ Start with a cheap inventory:
 - paths, byte sizes, headings, task refs, checkbox/state directives
 - current `feature_list.json` schema and ref set
 - `loop.json` fingerprint, retention profile, paths, and budgets when present
-- for a semantic amendment, any remaining-work budget advisory from plan/reseal
+- for a semantic amendment, any ref-local allowance or optional runtime advisory
+  from plan/reseal
 - strict OpenSpec validation status when available
 
 Read `tasks.md` first. Load only the proposal/design/spec sections needed to
@@ -68,12 +69,14 @@ Record retention, path profile, evidence depth, test profiles, budgets, and
 only when an audit diagnostic helps or an irreversible policy choice needs
 human confirmation; do not make it a second ceremony.
 
-For a semantic amendment, do not silently rescale an inherited budget. If used
-applies plus unfinished refs times `max_apply_attempts` exceed the recorded
-change cap, put one non-blocking `configured / recommended / shortfall` line
-in the advisory output. A smaller cap may be an intentional checkpoint;
-raising an activated ref-local ceiling or irreversible `hard_ceiling` remains
-a separate authority decision.
+For a semantic amendment, preserve each ref's `max_apply_attempts` and dormant
+`max_unblock_runs` unless the amendment explicitly changes that ref's policy.
+`apply_remaining` is the number of selected-wave refs with positive per-ref
+Apply remainder. Deleted Apply-count fields are migration residue only: ignore
+them on read, drop them on the next `check`, `plan`, or `reseal --migrate`,
+and never reintroduce them into written loop state. Optional active-minute or
+breaker advisories may still pause dispatch; raising an activated ref-local
+ceiling remains a separate authority decision.
 
 If a valid `loop.json` exists and its fingerprint still matches, show a
 one-line policy summary and reuse it. Do not ask again about D-drive or cache
@@ -146,8 +149,8 @@ python scripts/openspec_loop.py seal <change-id> --confirmed [explicit policy op
 Recommend `supervised` unless the user asked for Loop self-amend without a new
 interview; recommend `full_auto` only for repository-source deliverables.
 
-A remaining-work advisory does not mutate `loop.json`, does not fail the
-readiness latch, and is not a `check` warning.
+A ref-local or optional-runtime advisory does not mutate `loop.json`, does not
+fail the readiness latch, and is not a `check` warning.
 
 When `execution-ready` and the fingerprint still matches, one-line reuse — do
 not regenerate path questions. Do not ask again about D-drive, cache, or bundle
@@ -180,8 +183,10 @@ paths, output authority, or another decision reserved for the user.
 
 Ref-local Apply/unblock exhaustion is local and cannot be reset by a stamp.
 Raising an activated ref-local ceiling requires the applicable authority and a
-recorded reason. Legacy `hard_ceiling` is an ordinary-dispatch diagnostic; only
-raising it requires human confirmation.
+recorded reason. If present, legacy `hard_ceiling` is optional
+minutes/self-extension policy data only; it is neither an Apply gate nor an
+ordinary start-work authority surface. Raising that optional policy ceiling
+still requires human confirmation.
 
 ## Handoff
 

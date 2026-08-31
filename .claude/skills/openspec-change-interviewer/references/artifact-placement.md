@@ -53,9 +53,9 @@ Recommended ordinary layout when profile A applies:
 
 `openspec/changes/<change-id>/seal-preview.md` is optional. Write it only when
 the user requests an audit diagnostic or an irreversible policy choice needs
-human confirmation, such as raising `hard_ceiling` or changing retention,
-paths, or scope. The preview narrows that policy review; it is neither ordinary
-start-work authority nor a prerequisite for the first Apply.
+human confirmation, such as raising optional `hard_ceiling` policy data or
+changing retention, paths, or scope. The preview narrows that policy review; it
+is neither ordinary start-work authority nor a prerequisite for the first Apply.
 
 Forbidden ad-hoc roots: repository-root `_tmp/`, `tmp/`, `tmp_*`,
 `tmp_pytest_*`, `.pytest_tmp`, and unnamed scratch folders.

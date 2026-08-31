@@ -1,17 +1,21 @@
 # Optional seal preview / audit diagnostic format (可选盖章预览)
 
 `seal-preview.md` is an **optional audit diagnostic** for reviewing retention,
-paths, budgets, `autonomy`, `hard_ceiling`, and whole-registry fingerprint
-coverage. It is not a start-work gate. Ordinary Apply/dispatch does not require
-this file, `confirmed_at`, or `seal --confirmed` when the recorded
-`contract_fingerprint` matches and no irreversible policy change awaits human
-confirmation.
+paths, budgets, `autonomy`, optional `hard_ceiling` policy data, and
+whole-registry fingerprint coverage. It is not a start-work gate. Ordinary
+Apply/dispatch does not require this file, `confirmed_at`, or
+`seal --confirmed` when the recorded `contract_fingerprint` matches and no
+irreversible policy change awaits human confirmation.
 
 Use the preview when a human-readable policy review is useful, or before
-raising `hard_ceiling`, changing retention/paths/scope, destructive external
-writes, credentials, product `--commit`, or `git push`/PR/`main` operations.
-The preview records a decision; it does not itself authorize the later risky
-operation, check off tasks, or create retained/cache roots.
+raising optional `hard_ceiling`, changing retention/paths/scope, destructive
+external writes, credentials, product `--commit`, or `git push`/PR/`main`
+operations.
+If `hard_ceiling` is present, it may record only `max_active_minutes` and
+`max_self_extensions`. Deleted Apply-count keys belong to one-way migration and
+must not be recorded here. The preview records a decision; it does not itself
+authorize the later risky operation, check off tasks, or create retained/cache
+roots.
 
 ## Required sections
 
@@ -67,11 +71,11 @@ change-id → ledger / scratch / product|pointers（本 change 展开）
 - remaining-work budget advisory (only if the CLI payload has one):
   - configured / recommended / shortfall
 - autonomy:
-- hard_ceiling:
+- hard_ceiling: optional `max_active_minutes` / `max_self_extensions` only
 
 ## 5. Authority boundary
 - Ordinary fingerprint-matched work: check, plan, Apply, Verify, promote, sync
-- Human-confirmed policy: raise hard_ceiling; change retention, paths, or scope
+- Human-confirmed policy: raise optional hard_ceiling; change retention, paths, or scope
 - Risky operation still requires its own authority: product --commit,
   credentials, destructive external writes, git push / PR / main
 
