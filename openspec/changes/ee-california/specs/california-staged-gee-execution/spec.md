@@ -1,5 +1,18 @@
 ## ADDED Requirements
 
+### Requirement: Local Loop routing and external execution authority remain separate
+OpenSpec Loop v3 MAY begin ordinary repository-local Apply when `loop.json` matches the active task-registry fingerprint and no irreversible policy decision is pending. A supervisor-direct package SHALL use local role `zpy`, `agent=null`, its ref-local allowance, and a supervisor-owned join; legacy `sealed`, `confirmed_at`, `rose`, headcount, and aggregate iteration fields SHALL NOT become dispatch authority.
+
+Neither `zpy` routing nor any Loop autonomy mode SHALL authorize Earth Engine exports, GCS writes, paid submissions, credentials, product `--commit`, Git push, pull-request operations, or writes to `master`. Those effects SHALL remain behind the shared California gate and the separate repository/user authority that governs them.
+
+#### Scenario: Fingerprint-ready local work begins
+- **WHEN** the active registry fingerprint matches, no irreversible policy is pending, and R7 is dependency-ready
+- **THEN** the supervisor MAY execute the bounded R7 local package as `zpy` without a seal-preview or confirmation ceremony and SHALL create no agent dispatch envelope
+
+#### Scenario: Local routing reaches a live-capable operation
+- **WHEN** a `zpy` package reaches a GEE, GCS, paid, credential, product-commit, push, PR, or master-write boundary
+- **THEN** Loop authority alone SHALL be insufficient and the operation SHALL stop until the exact external gate and explicit authority pass
+
 ### Requirement: One shared gate protects every California cloud entry point
 Every CLI, Python runner, Notebook-rendered command, task planner, queue/resume path, RF helper, and direct California export function SHALL call one shared fail-closed gate before constructing or submitting a live task. The gate SHALL bind the OpenSpec fingerprint, active task ref, P2 and decision-family hashes, local-product acceptance, deployment identity, exact task manifest, fresh budget acceptance, current operation inventory, and expected output roots.
 
@@ -144,7 +157,7 @@ Task success, RF training acceptance, local matrix acceptance, P2 acceptance, ho
 - **THEN** they SHALL not alter the frozen metric denominator, method choice, labels, or production claims
 
 ### Requirement: Local CONUS authority cannot expand into CONUS cloud execution
-This change authorizes only the five declared local CONUS detection/product families. It SHALL NOT authorize CONUS Earth Engine tasks, nationwide RF training or inference, nationwide spending, CCDC/LandTrendr, classifier Asset creation, or an undeclared diagnostic. Every live cloud/RF task in this change remains limited to the exact California manifest. Broader cloud work requires a separately interviewed and sealed change with its own sources, task inventory, budget, outputs, and acceptance.
+This change authorizes only the five declared local CONUS detection/product families. It SHALL NOT authorize CONUS Earth Engine tasks, nationwide RF training or inference, nationwide spending, CCDC/LandTrendr, classifier Asset creation, or an undeclared diagnostic. Every live cloud/RF task in this change remains limited to the exact California manifest. Broader cloud work requires a separately interviewed and fingerprinted change with its own sources, task inventory, budget, outputs, and acceptance.
 
 #### Scenario: A caller broadens the exact California cloud manifest
 - **WHEN** a live task, queue, resume request, or cloud output prefix contains CONUS/nationwide scope, another undeclared geography, algorithm, Asset mutation, or diagnostic

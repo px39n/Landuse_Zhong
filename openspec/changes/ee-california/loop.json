@@ -1,8 +1,8 @@
 {
   "schema_version": "openspec-loop.v3",
   "change_id": "ee-california",
-  "contract_fingerprint": "92de58b9187d06b7453637c3144761008a9e555f3ec1e63ba1b2b27609ee7fcc",
-  "narrative_digest": "98e580ed113468b0359b9b0b7a0b528017f7382052c83a152480f88086c7da61",
+  "contract_fingerprint": "050c14b17ad9377d8e48e61b4da2af2f4fc2f15382e007433a6ed0168f78a72b",
+  "narrative_digest": "4766a73696c7e02a9c9f9edf85ab4173a466b07e33632c959ca81a5271d265af",
   "narrative_policy": "advisory",
   "sealed": true,
   "autonomy": "supervised",
@@ -20,14 +20,12 @@
       "max_unblock_runs": 1
     },
     "revision": {
-      "max_iterations": 8,
       "max_explore_runs": 1,
       "max_subagents": 4,
       "max_active_minutes": 120
     },
     "change": {
       "max_revisions": 3,
-      "max_iterations": 20,
       "max_active_minutes": 360
     }
   },
@@ -66,7 +64,6 @@
     }
   },
   "hard_ceiling": {
-    "max_iterations": 60,
     "max_active_minutes": 1080,
     "max_self_extensions": 3
   },
@@ -76,5 +73,6 @@
     "final": "whole-change verification plus strict OpenSpec validation",
     "audit": "legacy monitor only when retention=full or explicitly required"
   },
-  "confirmed_at": "2026-08-30T13:59:09Z"
+  "confirmed_at": "2026-08-30T13:59:09Z",
+  "resealed_at": "2026-08-31T06:38:19Z"
 }
