@@ -225,6 +225,45 @@ def test_unblock_host_policy_is_in_process_and_ref_local() -> None:
     assert "Persist a report only when it changes task direction" in unblock
 
 
+def test_completion_right_stamp_and_alignment_contract_is_explicit() -> None:
+    agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    loop = read_skill("openspec-loop-engineering")
+    interview = read_skill("openspec-change-interviewer")
+    verify = read_skill("openspec-verify-change")
+    unblock = read_skill("openspec-unblock-research")
+    guide = (REPO_ROOT / "docs" / "openspec-loop-engineering.md").read_text(
+        encoding="utf-8"
+    )
+    joined = "\n".join((agents, loop, interview, verify, unblock, guide))
+    normalized = " ".join(joined.split())
+
+    for phrase in (
+        "execution chapter",
+        "cycle stamp",
+        "chapter-outside",
+        "stamp_source=unblock_self_confirm",
+        "max_apply_attempts=2",
+        "max_unblock_runs=2",
+        "max_revisions=3",
+        "completion right",
+    ):
+        assert phrase.lower() in normalized.lower()
+
+    assert "Before every active Loop call" in agents
+    assert "creates no new command or receipt" in loop
+    assert "Ordinary gate never checks `max_revisions`" in loop
+    assert "Apply workers, including direct Apply, never edit `tasks.md`" in loop
+    assert "The fourth charged stamp" in interview
+    assert "Task Verify is closure" in verify
+    assert "do not gate diagnosis" in " ".join(unblock.split())
+    assert "A second unblock MUST NOT self-restamp" in unblock
+    assert "per-call alignment" in guide
+    assert "charged_cycle_stamps gate" in guide
+    assert "max_revisions=14" not in agents
+    assert "max_revisions=14" not in loop
+    assert "max_revisions = task" not in normalized
+
+
 def test_seal_preview_is_change_scoped_and_not_yearbook_template() -> None:
     interview = read_skill("openspec-change-interviewer")
     preview = (

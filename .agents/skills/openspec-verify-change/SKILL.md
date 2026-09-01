@@ -38,6 +38,15 @@ For `none` or `thin`, never fabricate a full `auto_test_openspec` bundle. Use
 the sealed scratch/ledger policy and existing product pointers. If an operation
 requires an unapproved external write or destructive action, return `BLOCKED`.
 
+Task Verify is closure inside an already admitted execution chapter. Before
+invocation, align the current task ACCEPT, applicable requirements,
+`loop.json`, and this skill. A matching fingerprint plus the task's own joined
+completed Apply/evidence is sufficient to attempt Verify: `max_revisions`,
+revision/change active-minute caps, unrelated-ref results, and generic breakers
+MUST NOT block it. Verification still fails or blocks on its own fingerprint,
+join, evidence, environment, or semantic preconditions and never edits ACCEPT.
+Promotion changes only checkbox/feature state and consumes no cycle stamp.
+
 ## Task-mode scope
 
 Resolve the selected ref's checkbox, `ACCEPT:`, `TEST:`, direct dependencies,

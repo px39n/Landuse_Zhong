@@ -59,6 +59,16 @@ CANONICAL_APPLY_STATUSES = {
     "unverified",
 }
 ZERO_APPLY_KINDS = {"explore", "verify", "goal", "stop_hook", "review"}
+GATE_KINDS = ("apply", "verify", "explore", "unblock", "goal", "stop_hook", "review")
+NEW_WORK_KINDS = {"apply", "explore"}
+REF_REQUIRED_GATE_KINDS = {"apply", "verify", "explore", "unblock"}
+STAMP_SOURCES = (
+    "user_confirmed",
+    "interviewer_confirmed",
+    "unblock_self_confirm",
+    "full_auto",
+    "full_auto_apply_revision",
+)
 
 TASK_STATES = {
     "pending",
@@ -167,6 +177,14 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     ) as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
+        tmp_path = Path(handle.name)
+    tmp_path.replace(path)
+
+
+def write_bytes_atomic(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as handle:
+        handle.write(payload)
         tmp_path = Path(handle.name)
     tmp_path.replace(path)
 
@@ -905,7 +923,11 @@ def compute_semantic_fingerprint(repo_root: Path, change_id: str) -> str:
     tasks_path = repo_root / "openspec" / "changes" / change_id / "tasks.md"
     if not tasks_path.is_file():
         raise ValueError(f"missing contract artifacts for change `{change_id}`")
-    normalized = normalize_active_tasks_text(read_utf8(tasks_path))
+    return compute_semantic_fingerprint_text(read_utf8(tasks_path))
+
+
+def compute_semantic_fingerprint_text(tasks_text: str) -> str:
+    normalized = normalize_active_tasks_text(tasks_text)
     return sha256_texts(b"openspec-loop.semantic.v3", normalized.encode("utf-8"))
 
 
@@ -928,6 +950,136 @@ def autonomy_of(config: dict[str, Any] | None) -> str:
     return "supervised"
 
 
+def default_stamp_state(fingerprint: str) -> dict[str, Any]:
+    return {
+        "chapter_id": fingerprint,
+        "semantic_stamps_in_chapter": 0,
+        "charged_cycle_stamps": 0,
+        "self_confirmed_refs": {},
+        "last_stamp": None,
+    }
+
+
+def stamp_state_of(config: dict[str, Any] | None, fingerprint: str) -> dict[str, Any]:
+    raw = config.get("stamp_state") if isinstance(config, dict) else None
+    if not isinstance(raw, dict):
+        return default_stamp_state(fingerprint)
+    state = default_stamp_state(fingerprint)
+    chapter_id = raw.get("chapter_id")
+    if isinstance(chapter_id, str) and chapter_id:
+        state["chapter_id"] = chapter_id
+    for key in ("semantic_stamps_in_chapter", "charged_cycle_stamps"):
+        value = raw.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            state[key] = value
+    recorded = raw.get("self_confirmed_refs")
+    if isinstance(recorded, dict):
+        state["self_confirmed_refs"] = {
+            str(source): sorted(
+                {str(ref) for ref in refs if isinstance(ref, str) and ref}
+            )
+            for source, refs in recorded.items()
+            if isinstance(source, str) and isinstance(refs, list)
+        }
+    last_stamp = raw.get("last_stamp")
+    if last_stamp is None or isinstance(last_stamp, dict):
+        state["last_stamp"] = last_stamp
+    return state
+
+
+def feature_registry_drained(feature_path: Path) -> bool:
+    if not feature_path.is_file():
+        return False
+    payload = json.loads(read_utf8(feature_path))
+    features = payload.get("features") if isinstance(payload, dict) else None
+    if not isinstance(features, dict) or not features:
+        return False
+    return all(
+        isinstance(item, dict) and item.get("state") in TERMINAL_STATES
+        for item in features.values()
+    )
+
+
+def episode_for_fingerprint(
+    ledger: dict[str, Any], fingerprint: str
+) -> dict[str, Any] | None:
+    for episode in reversed(ledger.get("episodes", [])):
+        if episode.get("contract_fingerprint") == fingerprint:
+            return episode
+    return None
+
+
+def episode_has_execution_work(episode: dict[str, Any] | None) -> bool:
+    return any(
+        attempt.get("kind") in {"apply", "unblock"}
+        for attempt in attempts_for_episode(episode or {})
+    )
+
+
+def classify_semantic_stamp(
+    *,
+    state: dict[str, Any],
+    stamp_source: str,
+    confirmed: bool,
+    episode: dict[str, Any] | None,
+    registry_drained: bool,
+) -> tuple[bool, bool]:
+    """Return (charged, opens_new_chapter) for one semantic stamp."""
+
+    if stamp_source == "full_auto_apply_revision":
+        return True, False
+    if stamp_source == "unblock_self_confirm":
+        return True, False
+    has_work = episode_has_execution_work(episode)
+    stamps = int(state.get("semantic_stamps_in_chapter", 0) or 0)
+    if confirmed and registry_drained:
+        return False, True
+    if confirmed and not has_work and stamps == 0:
+        return False, False
+    return True, False
+
+
+def updated_stamp_state(
+    *,
+    prior: dict[str, Any],
+    source_fingerprint: str,
+    target_fingerprint: str,
+    stamp_source: str,
+    ref: str | None,
+    reason: str,
+    charged: bool,
+    opens_new_chapter: bool,
+) -> dict[str, Any]:
+    if opens_new_chapter:
+        state = default_stamp_state(target_fingerprint)
+        state["semantic_stamps_in_chapter"] = 1
+    else:
+        state = json.loads(json.dumps(prior, ensure_ascii=False))
+        state["semantic_stamps_in_chapter"] = (
+            int(state.get("semantic_stamps_in_chapter", 0) or 0) + 1
+        )
+        if charged:
+            state["charged_cycle_stamps"] = (
+                int(state.get("charged_cycle_stamps", 0) or 0) + 1
+            )
+    if stamp_source == "unblock_self_confirm" and ref:
+        by_source = state.setdefault("self_confirmed_refs", {})
+        refs = by_source.setdefault(source_fingerprint, [])
+        if ref not in refs:
+            refs.append(ref)
+            refs.sort()
+    state["last_stamp"] = {
+        "stamp_source": stamp_source,
+        "source_fingerprint": source_fingerprint,
+        "target_fingerprint": target_fingerprint,
+        "ref": ref,
+        "charged": charged,
+        "reason": reason,
+        "recorded_at_utc": utc_now(),
+    }
+    return state
+
+
 def hard_ceiling_of(config: dict[str, Any] | None) -> dict[str, int] | None:
     raw = config.get("hard_ceiling") if isinstance(config, dict) else None
     if not isinstance(raw, dict):
@@ -944,7 +1096,29 @@ def self_extensions_used(config: dict[str, Any] | None) -> int:
     if not isinstance(config, dict):
         return 0
     recorded = config.get("budget_extensions")
-    return len(recorded) if isinstance(recorded, list) else 0
+    if not isinstance(recorded, list):
+        return 0
+    used = 0
+    for entry in recorded:
+        if not isinstance(entry, dict):
+            continue
+        before = entry.get("from")
+        after = entry.get("to")
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            # Preserve compatibility with legacy extension rows that did not
+            # record comparable values.
+            used += 1
+            continue
+        if any(
+            isinstance(after.get(key), int)
+            and not isinstance(after.get(key), bool)
+            and isinstance(before.get(key), int)
+            and not isinstance(before.get(key), bool)
+            and after[key] > before[key]
+            for key in set(before) & set(after)
+        ):
+            used += 1
+    return used
 
 
 def narrative_policy_of(config: dict[str, Any] | None) -> str:
@@ -981,6 +1155,14 @@ def sanitize_loop_config(config: dict[str, Any]) -> dict[str, Any]:
         hard_ceiling.pop("max_iterations", None)
         if not hard_ceiling:
             sanitized.pop("hard_ceiling", None)
+    fingerprint = sanitized.get("contract_fingerprint")
+    if (
+        sanitized.get("schema_version") == SCHEMA_LOOP
+        and "stamp_state" not in sanitized
+        and isinstance(fingerprint, str)
+        and fingerprint
+    ):
+        sanitized["stamp_state"] = default_stamp_state(fingerprint)
     return sanitized
 
 
@@ -1061,6 +1243,19 @@ def loop_config_issues(config: dict[str, Any] | None, change_id: str) -> list[st
             issues.append("loop.json autonomy must be supervised or full_auto")
         if "hard_ceiling" in config:
             issues.extend(hard_ceiling_issues(config))
+        stamp_state = config.get("stamp_state")
+        if stamp_state is not None:
+            if not isinstance(stamp_state, dict):
+                issues.append("loop.json stamp_state must be an object")
+            else:
+                for key in ("semantic_stamps_in_chapter", "charged_cycle_stamps"):
+                    value = stamp_state.get(key)
+                    if (
+                        isinstance(value, bool)
+                        or not isinstance(value, int)
+                        or value < 0
+                    ):
+                        issues.append(f"loop.json stamp_state.{key} must be non-negative")
     if config.get("change_id") != change_id:
         issues.append("loop.json change_id mismatch")
     if config.get("retention") not in {"none", "thin", "full"}:
@@ -1233,6 +1428,7 @@ def initialize_thin_loop_config(
         "per_ref_budgets": {
             task.ref: DEFAULT_BUDGETS["task"].copy() for task in tasks
         },
+        "stamp_state": default_stamp_state(fingerprint),
         "test_profiles": DEFAULT_TEST_PROFILES.copy(),
         "initialized_from": "thin-default",
     }
@@ -2355,27 +2551,18 @@ def cmd_apply_revision(args: argparse.Namespace) -> int:
     ceiling = hard_ceiling_of(config)
     ledger = load_or_init_ledger(ledger_path, args.change_id)
     episode, run = load_run(ledger, args.change_id, fingerprint, args.run_id)
-    stop_reasons = gate_reasons(
-        ledger,
-        episode,
-        run,
-        None,
-        None,
-        budgets=budgets,
-        hard_ceiling=ceiling,
-        task_budget=None,
-        current_allocated_subagents=None,
-        prospective_subagent_ids=[],
-    )
-    if stop_reasons:
+    state = stamp_state_of(config, fingerprint)
+    charged_used = int(state.get("charged_cycle_stamps", 0) or 0)
+    max_revisions = int(budgets["change"]["max_revisions"])
+    if charged_used >= max_revisions:
         return apply_revision_failure(
             args.change_id,
-            ["gate reports stop: " + ", ".join(stop_reasons)],
+            [f"change_cycle_stamp_budget_exhausted:{max_revisions}"],
             autonomy=autonomy,
             hard_ceiling=ceiling,
-            terminal=any(
-                reason.startswith("hard_ceiling_") for reason in stop_reasons
-            ),
+            terminal=False,
+            revision_charged=True,
+            charged_cycle_stamps=charged_used,
         )
 
     proposal = json.loads(read_utf8(args.proposal))
@@ -2392,6 +2579,8 @@ def cmd_apply_revision(args: argparse.Namespace) -> int:
     tasks_path, feature_path = contract_paths(repo_root, args.change_id)
     original_tasks = tasks_path.read_bytes()
     original_features = feature_path.read_bytes() if feature_path.exists() else None
+    loop_path = loop_config_path(repo_root, args.change_id)
+    original_loop = loop_path.read_bytes()
     tasks = parse_task_file(original_tasks.decode("utf-8"))
     if not tasks:
         return apply_revision_failure(
@@ -2457,6 +2646,8 @@ def cmd_apply_revision(args: argparse.Namespace) -> int:
                 "reseal",
                 args.change_id,
                 "--allow-semantic-change",
+                "--stamp-source",
+                "full_auto_apply_revision",
                 "--reason",
                 args.reason or f"revision proposal for goal {proposal.get('goal')}",
             ],
@@ -2474,6 +2665,8 @@ def cmd_apply_revision(args: argparse.Namespace) -> int:
             feature_path.unlink()
         else:
             feature_path.write_bytes(original_features)
+        if loop_path.exists() and loop_path.read_bytes() != original_loop:
+            write_bytes_atomic(loop_path, original_loop)
         return apply_revision_failure(args.change_id, [str(exc)], autonomy=autonomy)
 
     after = build_plan_payload(repo_root, args.change_id, advisory=False, batch=True)
@@ -2613,6 +2806,19 @@ def cmd_seal(args: argparse.Namespace) -> int:
         return 2
 
     prior = load_loop_config(repo_root, args.change_id) or {}
+    if prior and prior.get("contract_fingerprint") != preflight["contract_fingerprint"]:
+        emit_json(
+            {
+                "schema_version": SCHEMA_LOOP,
+                "change_id": args.change_id,
+                "written": False,
+                "issues": [
+                    "seal cannot restamp a semantic registry change; use reseal "
+                    "--allow-semantic-change or apply-revision"
+                ],
+            }
+        )
+        return 2
     prior_paths = prior.get("paths") if isinstance(prior.get("paths"), dict) else {}
     prior_budgets = (
         prior.get("budgets") if isinstance(prior.get("budgets"), dict) else {}
@@ -2786,9 +2992,18 @@ def cmd_seal(args: argparse.Namespace) -> int:
         "paths": paths,
         "budgets": budgets,
         "per_ref_budgets": per_ref_budgets,
+        "stamp_state": (
+            stamp_state_of(prior, preflight["contract_fingerprint"])
+            if prior.get("contract_fingerprint") == preflight["contract_fingerprint"]
+            else default_stamp_state(preflight["contract_fingerprint"])
+        ),
         "test_profiles": DEFAULT_TEST_PROFILES.copy(),
         "confirmed_at": args.confirmed_at or utc_now(),
     }
+    if isinstance(prior.get("budget_extensions"), list):
+        config["budget_extensions"] = json.loads(
+            json.dumps(prior["budget_extensions"], ensure_ascii=False)
+        )
     if hard_ceiling:
         config["hard_ceiling"] = hard_ceiling
     changed_fields = seal_changed_fields(prior, config)
@@ -2818,6 +3033,265 @@ CHANGE_BUDGET_OVERRIDES = (
     ("set_max_revisions", "max_revisions"),
     ("set_max_total_active_minutes", "max_active_minutes"),
 )
+
+
+def build_feature_payload_from_tasks_text(
+    repo_root: Path,
+    change_id: str,
+    tasks_text: str,
+) -> dict[str, Any]:
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    import generate_openspec_feature_list as generator
+
+    feature_path = repo_root / "openspec" / "changes" / change_id / "feature_list.json"
+    existing: dict[str, Any] = {}
+    if feature_path.is_file():
+        payload = json.loads(read_utf8(feature_path))
+        if isinstance(payload, dict) and isinstance(payload.get("features"), dict):
+            existing = payload["features"]
+    parsed = generator.parse_tasks(tasks_text)
+    warnings = generator.quality_warnings(parsed)
+    features = generator.build_features(parsed, existing)
+    payload = {
+        "schema_version": generator.SCHEMA,
+        "change_id": change_id,
+        "registry": {
+            "active_source": "tasks.md active registry",
+            "active_ref_count": len(features),
+            "history_source": "git",
+        },
+        "features": features,
+    }
+    if warnings:
+        payload["quality_warnings"] = warnings
+    return payload
+
+
+def active_task_blocks(tasks_text: str) -> dict[str, str]:
+    normalized = normalize_active_tasks_text(tasks_text)
+    lines = normalized.splitlines(keepends=True)
+    starts: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
+        match = CHECKBOX_RE.match(line.rstrip("\r\n"))
+        if match:
+            starts.append((index, match.group("ref")))
+    blocks: dict[str, str] = {}
+    for position, (start, ref) in enumerate(starts):
+        end = starts[position + 1][0] if position + 1 < len(starts) else len(lines)
+        blocks[ref] = "".join(lines[start:end]).rstrip() + "\n"
+    return blocks
+
+
+def active_registry_preamble(tasks_text: str) -> str:
+    normalized = normalize_active_tasks_text(tasks_text)
+    lines = normalized.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if CHECKBOX_RE.match(line.rstrip("\r\n")):
+            return "".join(lines[:index])
+    return normalized
+
+
+def task_structure_signature(task: TaskEntry) -> dict[str, Any]:
+    return {
+        "task_id": task.task_id,
+        "title": task.title,
+        "checked": task.checked,
+        "depends": task.depends_raw,
+        "independent": task.independent_raw,
+        "no_dep": task.no_dep_raw,
+        "state": task.state_raw,
+        "supersedes": task.supersedes_raw,
+        "write_scope": task.write_scope_raw,
+        "role_id": task.role_id_raw,
+        "execution": task.execution_raw,
+        "join": task.join_raw,
+        "worktree": task.worktree_raw,
+    }
+
+
+def protected_accept_atoms(text: str) -> set[str]:
+    atoms = set(re.findall(r"`[^`]+`|\b\d+(?:\.\d+)?%?\b", text))
+    for marker in (
+        "MUST",
+        "SHALL",
+        "exact",
+        "exactly",
+        "at least",
+        "no ",
+        "not ",
+        "不得",
+        "禁止",
+        "必须",
+        "至少",
+        "精确",
+    ):
+        if marker.lower() in text.lower():
+            atoms.add(marker.lower())
+    return atoms
+
+
+def accept_is_mechanically_non_widening(before: str, after: str) -> bool:
+    old = " ".join(before.split())
+    new = " ".join(after.split())
+    if new == old or new.startswith(old):
+        return True
+    if len(new) < len(old):
+        return False
+    relaxations = (
+        "best effort",
+        "optional",
+        "may omit",
+        "can omit",
+        "允许缺失",
+        "可以不",
+        "不再要求",
+        "可选",
+    )
+    if any(term in new.lower() and term not in old.lower() for term in relaxations):
+        return False
+    new_lower = new.lower()
+    return all(atom.lower() in new_lower for atom in protected_accept_atoms(old))
+
+
+def strip_self_restamp_mutable_lines(block: str) -> tuple[list[str], list[str]]:
+    immutable: list[str] = []
+    failure_local: list[str] = []
+    skip_mode: str | None = None
+    for line in block.splitlines():
+        if re.match(r"^\s*-\s*ACCEPT\s*:", line, re.IGNORECASE):
+            skip_mode = "accept"
+            continue
+        if re.match(r"^\s*-\s*TEST\s*:", line, re.IGNORECASE):
+            skip_mode = "test"
+            continue
+        if re.match(r"^\s*-\s*FILES\s*:", line, re.IGNORECASE):
+            skip_mode = None
+            continue
+        if re.match(r"^\s*-\s*FAILURE_LOCAL\s*:", line, re.IGNORECASE):
+            skip_mode = None
+            failure_local.append(line.strip())
+            continue
+        if skip_mode and (line.startswith("    ") or not line.strip()):
+            continue
+        if skip_mode:
+            skip_mode = None
+        immutable.append(line.rstrip())
+    return immutable, failure_local
+
+
+def self_restamp_candidate_reasons(
+    *,
+    repo_root: Path,
+    change_id: str,
+    ref: str,
+    baseline_text: str,
+    candidate_text: str,
+    config: dict[str, Any],
+    ledger: dict[str, Any],
+    source_fingerprint: str,
+) -> list[str]:
+    reasons: list[str] = []
+    baseline_tasks = parse_task_file(baseline_text)
+    candidate_tasks = parse_task_file(candidate_text)
+    baseline_refs = [task.ref for task in baseline_tasks]
+    candidate_refs = [task.ref for task in candidate_tasks]
+    if baseline_refs != candidate_refs:
+        reasons.append("self_restamp_ref_set_or_order_changed")
+        return reasons
+    baseline_by_ref = {task.ref: task for task in baseline_tasks}
+    candidate_by_ref = {task.ref: task for task in candidate_tasks}
+    if ref not in baseline_by_ref:
+        reasons.append(f"self_restamp_unknown_ref:{ref}")
+        return reasons
+    if baseline_by_ref[ref].checked:
+        reasons.append(f"self_restamp_passed_ref_forbidden:{ref}")
+
+    baseline_blocks = active_task_blocks(baseline_text)
+    candidate_blocks = active_task_blocks(candidate_text)
+    if active_registry_preamble(baseline_text) != active_registry_preamble(candidate_text):
+        reasons.append("self_restamp_goal_or_registry_preamble_changed")
+    for candidate_ref in baseline_refs:
+        if candidate_ref != ref and baseline_blocks.get(candidate_ref) != candidate_blocks.get(
+            candidate_ref
+        ):
+            reasons.append(f"self_restamp_other_ref_changed:{candidate_ref}")
+
+    before = baseline_by_ref[ref]
+    after = candidate_by_ref[ref]
+    if task_structure_signature(before) != task_structure_signature(after):
+        reasons.append(f"self_restamp_framework_or_dag_changed:{ref}")
+
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    import generate_openspec_feature_list as generator
+
+    parsed_before = {task.ref: task for task in generator.parse_tasks(baseline_text)}[ref]
+    parsed_after = {task.ref: task for task in generator.parse_tasks(candidate_text)}[ref]
+    accept_before = "\n".join(parsed_before.accept_lines)
+    accept_after = "\n".join(parsed_after.accept_lines)
+    if not accept_is_mechanically_non_widening(accept_before, accept_after):
+        reasons.append(f"self_restamp_accept_widening_or_unprovable:{ref}")
+
+    test_before = "\n".join(parsed_before.test_lines)
+    test_after = "\n".join(parsed_after.test_lines)
+    scope_before = re.findall(r"SCOPE\s*:\s*([A-Za-z]+)", test_before, re.IGNORECASE)
+    scope_after = re.findall(r"SCOPE\s*:\s*([A-Za-z]+)", test_after, re.IGNORECASE)
+    if scope_before != scope_after or "Run:" not in test_after:
+        reasons.append(f"self_restamp_test_scope_or_executable_changed:{ref}")
+    if "--commit" in test_after and "--commit" not in test_before:
+        reasons.append(f"self_restamp_product_commit_forbidden:{ref}")
+
+    if before.files_raw != after.files_raw:
+        if before.write_scope_raw != after.write_scope_raw or not before.write_scope_raw:
+            reasons.append(f"self_restamp_write_scope_expansion:{ref}")
+        else:
+            scopes = parse_scope_tokens(before.write_scope_raw)
+            outside = [
+                item
+                for item in parse_scope_tokens(after.files_raw)
+                if not path_within_declared_scope(normalize_record_path(item), scopes)
+            ]
+            if outside:
+                reasons.append(f"self_restamp_files_outside_write_scope:{ref}")
+
+    immutable_before, failure_before = strip_self_restamp_mutable_lines(
+        baseline_blocks.get(ref, "")
+    )
+    immutable_after, failure_after = strip_self_restamp_mutable_lines(
+        candidate_blocks.get(ref, "")
+    )
+    if immutable_before != immutable_after:
+        reasons.append(f"self_restamp_non_allowlisted_prose_changed:{ref}")
+    if len(failure_after) > 1 or (failure_before and failure_before != failure_after):
+        reasons.append(f"self_restamp_failure_local_sentence_invalid:{ref}")
+
+    if compute_semantic_fingerprint_text(baseline_text) == compute_semantic_fingerprint_text(
+        candidate_text
+    ):
+        reasons.append("self_restamp_candidate_has_no_semantic_change")
+
+    episode = episode_for_fingerprint(ledger, source_fingerprint)
+    attempts = attempts_for_episode(episode or {})
+    blocking = has_blocking_evidence(attempts, ref)
+    latest_unblock = latest_attempt_for_ref(attempts, ref, kind="unblock")
+    amend_spec = bool(latest_unblock and latest_unblock.get("disposition") == "amend_spec")
+    if not (blocking or amend_spec):
+        reasons.append(f"self_restamp_requires_blocking_window:{ref}")
+    unblock_count = sum(
+        1
+        for attempt in attempts
+        if attempt.get("ref") == ref and attempt.get("kind") == "unblock"
+    )
+    if unblock_count >= 2:
+        reasons.append(f"self_restamp_second_unblock_terminal:{ref}")
+    state = stamp_state_of(config, source_fingerprint)
+    already = state.get("self_confirmed_refs", {}).get(source_fingerprint, [])
+    if ref in already:
+        reasons.append(f"self_restamp_already_used:{ref}:{source_fingerprint}")
+    return reasons
 
 
 def reseal_failure(change_id: str, issues: list[str], **extra: Any) -> int:
@@ -2862,33 +3336,105 @@ def cmd_reseal(args: argparse.Namespace) -> int:
     if not legacy and schema_version != SCHEMA_LOOP:
         return reseal_failure(change_id, [f"unsupported loop schema `{schema_version}`"])
 
-    semantic = compute_semantic_fingerprint(repo_root, change_id)
-    narrative = compute_narrative_digest(repo_root, change_id)
-
-    # A v2 fingerprint hashed four whole files, so it can never equal a v3
-    # semantic hash. Only a v3 config can report a real semantic change.
+    tasks_path, feature_path = contract_paths(repo_root, change_id)
+    baseline_tasks = read_utf8(tasks_path)
+    source_fingerprint = str(config.get("contract_fingerprint") or "")
     autonomy = autonomy_of(config)
-    semantic_change = not legacy and config.get("contract_fingerprint") != semantic
-    if semantic_change and not (
-        args.allow_semantic_change and (args.confirmed or autonomy == "full_auto")
-    ):
+    stamp_source = args.stamp_source or (
+        "user_confirmed" if args.confirmed else "full_auto"
+    )
+    self_confirm = stamp_source == "unblock_self_confirm"
+
+    candidate_tasks = baseline_tasks
+    candidate_path: Path | None = None
+    if self_confirm:
+        if autonomy != "supervised":
+            return reseal_failure(
+                change_id,
+                ["unblock_self_confirm is the supervised-only semantic exception"],
+                autonomy=autonomy,
+            )
+        if args.confirmed:
+            return reseal_failure(
+                change_id,
+                ["unblock_self_confirm must not use --confirmed"],
+                autonomy=autonomy,
+            )
+        if not args.ref or args.candidate_tasks is None or not args.reason:
+            return reseal_failure(
+                change_id,
+                ["unblock_self_confirm requires --ref, --candidate-tasks, and --reason"],
+                autonomy=autonomy,
+            )
+        if any(
+            getattr(args, name, None) is not None
+            for name, _ in CHANGE_BUDGET_OVERRIDES
+        ) or args.narrative_policy:
+            return reseal_failure(
+                change_id,
+                ["unblock_self_confirm cannot change budgets or narrative policy"],
+                autonomy=autonomy,
+            )
+        if compute_semantic_fingerprint_text(baseline_tasks) != source_fingerprint:
+            return reseal_failure(
+                change_id,
+                ["active tasks must still match the sealed fingerprint before self-restamp"],
+                autonomy=autonomy,
+            )
+        candidate_path = args.candidate_tasks
+        if not candidate_path.is_absolute():
+            candidate_path = repo_root / candidate_path
+        candidate_path = candidate_path.resolve()
+        scratch = config.get("paths", {}).get("scratch")
+        if not isinstance(scratch, str) or not scratch:
+            return reseal_failure(change_id, ["self-restamp requires configured scratch"])
+        scratch_path = Path(scratch)
+        if not scratch_path.is_absolute():
+            scratch_path = repo_root / scratch_path
+        scratch_path = scratch_path.resolve()
+        try:
+            candidate_path.relative_to(scratch_path)
+        except ValueError:
+            return reseal_failure(
+                change_id,
+                ["--candidate-tasks must be inside the configured scratch root"],
+            )
+        if not candidate_path.is_file():
+            return reseal_failure(change_id, [f"missing candidate tasks: {candidate_path}"])
+        candidate_tasks = read_utf8(candidate_path)
+
+    semantic = compute_semantic_fingerprint_text(candidate_tasks)
+    narrative = compute_narrative_digest(repo_root, change_id)
+    semantic_change = not legacy and source_fingerprint != semantic
+    if semantic_change and not args.allow_semantic_change:
         return reseal_failure(
             change_id,
             [
                 "semantic contract change detected; run "
                 f"`$openspec-change-interviewer {change_id}` or pass "
-                "--allow-semantic-change --confirmed"
+                "--allow-semantic-change"
             ],
+            semantic_change=True,
+            autonomy=autonomy,
+        )
+    if semantic_change and not self_confirm and not (
+        args.confirmed or autonomy == "full_auto"
+    ):
+        return reseal_failure(
+            change_id,
+            ["autonomy `supervised` requires --confirmed for a semantic amendment"],
             semantic_change=True,
             autonomy=autonomy,
         )
     if semantic_change and not args.confirmed and not args.reason:
         return reseal_failure(
             change_id,
-            ["autonomy `full_auto` requires --reason for a semantic amendment"],
+            ["an unconfirmed semantic amendment requires --reason"],
             semantic_change=True,
             autonomy=autonomy,
         )
+    if self_confirm and not semantic_change:
+        return reseal_failure(change_id, ["self-restamp candidate has no semantic change"])
 
     updated = json.loads(json.dumps(config, ensure_ascii=False))
     updated["schema_version"] = SCHEMA_LOOP
@@ -2909,34 +3455,41 @@ def cmd_reseal(args: argparse.Namespace) -> int:
             )
         requested[field_name] = value
 
-    extension = {
+    budget_changes = {
         field: value
         for field, value in requested.items()
         if change_budgets.get(field) != value
+    }
+    budget_increases = {
+        field: value
+        for field, value in budget_changes.items()
+        if isinstance(change_budgets.get(field), int)
+        and value > change_budgets[field]
     }
     prior_ceiling = (
         config.get("hard_ceiling")
         if isinstance(config.get("hard_ceiling"), dict)
         else None
     )
-    if extension:
+    if budget_changes:
         if not args.reason:
             return reseal_failure(
-                change_id, ["a budget extension requires --reason"], autonomy=autonomy
+                change_id, ["a budget change requires --reason"], autonomy=autonomy
             )
         if autonomy != "full_auto" and not args.confirmed:
             return reseal_failure(
                 change_id,
-                ["autonomy `supervised` requires --confirmed for a budget extension"],
+                ["autonomy `supervised` requires --confirmed for a budget change"],
                 autonomy=autonomy,
             )
-        if prior_ceiling is not None:
+        if prior_ceiling is not None and budget_increases:
             ceiling = hard_ceiling_of(config)
             over_ceiling = [
-                f"change.{field} {extension[field]} exceeds "
+                f"change.{field} {budget_increases[field]} exceeds "
                 f"hard_ceiling.{ceiling_key} {ceiling[ceiling_key]}"
                 for ceiling_key, field in HARD_CEILING_BUDGET_LINKS
-                if field in extension and extension[field] > ceiling[ceiling_key]
+                if field in budget_increases
+                and budget_increases[field] > ceiling[ceiling_key]
             ]
             if over_ceiling:
                 return reseal_failure(
@@ -2957,22 +3510,81 @@ def cmd_reseal(args: argparse.Namespace) -> int:
                     hard_ceiling=ceiling,
                     self_extensions_used=used,
                 )
-        previous = {field: change_budgets.get(field) for field in sorted(extension)}
-        for field in sorted(extension):
-            change_budgets[field] = extension[field]
+        previous = {
+            field: change_budgets.get(field) for field in sorted(budget_changes)
+        }
+        for field in sorted(budget_changes):
+            change_budgets[field] = budget_changes[field]
             changed_fields.append(f"change.{field}")
         updated.setdefault("budget_extensions", []).append(
             {
                 "recorded_at_utc": utc_now(),
                 "scope": "change",
-                "fields": sorted(extension),
+                "fields": sorted(budget_changes),
                 "from": previous,
-                "to": {field: extension[field] for field in sorted(extension)},
+                "to": {
+                    field: budget_changes[field] for field in sorted(budget_changes)
+                },
                 "autonomy": autonomy,
                 "confirmed": bool(args.confirmed),
                 "reason": args.reason,
             }
         )
+
+    revision_charged = False
+    opens_new_chapter = False
+    if semantic_change:
+        ledger_path = configured_ledger_path(repo_root, config, None)
+        ledger = load_or_init_ledger(ledger_path, change_id)
+        episode = episode_for_fingerprint(ledger, source_fingerprint)
+        state = stamp_state_of(config, source_fingerprint)
+        if self_confirm:
+            self_reasons = self_restamp_candidate_reasons(
+                repo_root=repo_root,
+                change_id=change_id,
+                ref=args.ref,
+                baseline_text=baseline_tasks,
+                candidate_text=candidate_tasks,
+                config=config,
+                ledger=ledger,
+                source_fingerprint=source_fingerprint,
+            )
+            if self_reasons:
+                return reseal_failure(
+                    change_id,
+                    self_reasons,
+                    semantic_change=True,
+                    autonomy=autonomy,
+                )
+        revision_charged, opens_new_chapter = classify_semantic_stamp(
+            state=state,
+            stamp_source=stamp_source,
+            confirmed=bool(args.confirmed),
+            episode=episode,
+            registry_drained=feature_registry_drained(feature_path),
+        )
+        max_revisions = int(change_budgets["max_revisions"])
+        charged_used = int(state.get("charged_cycle_stamps", 0) or 0)
+        if revision_charged and charged_used >= max_revisions:
+            return reseal_failure(
+                change_id,
+                [f"change_cycle_stamp_budget_exhausted:{max_revisions}"],
+                semantic_change=True,
+                revision_charged=True,
+                charged_cycle_stamps=charged_used,
+            )
+        updated["stamp_state"] = updated_stamp_state(
+            prior=state,
+            source_fingerprint=source_fingerprint,
+            target_fingerprint=semantic,
+            stamp_source=stamp_source,
+            ref=args.ref if self_confirm else None,
+            reason=args.reason or "confirmed semantic reseal",
+            charged=revision_charged,
+            opens_new_chapter=opens_new_chapter,
+        )
+    else:
+        updated["stamp_state"] = stamp_state_of(config, source_fingerprint)
     if args.narrative_policy and args.narrative_policy != narrative_policy_of(config):
         changed_fields.append("narrative_policy")
 
@@ -2994,9 +3606,35 @@ def cmd_reseal(args: argparse.Namespace) -> int:
     if post_issues:
         return reseal_failure(change_id, post_issues)
 
-    restamp_plan = build_plan_payload(repo_root, change_id, advisory=True)
     updated["resealed_at"] = utc_now()
-    write_json_atomic(path, updated)
+    if self_confirm:
+        original_tasks = tasks_path.read_bytes()
+        original_features = feature_path.read_bytes() if feature_path.exists() else None
+        original_loop = path.read_bytes()
+        feature_payload = build_feature_payload_from_tasks_text(
+            repo_root, change_id, candidate_tasks
+        )
+        feature_bytes = (
+            json.dumps(feature_payload, ensure_ascii=False, indent=2) + "\n"
+        ).encode("utf-8")
+        try:
+            write_bytes_atomic(tasks_path, candidate_tasks.encode("utf-8"))
+            write_bytes_atomic(feature_path, feature_bytes)
+            write_json_atomic(path, updated)
+            state, detail = strict_validation_state(repo_root, change_id)
+            if state == "failed":
+                raise ValueError(f"strict validation failed: {detail}")
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            write_bytes_atomic(tasks_path, original_tasks)
+            if original_features is None:
+                if feature_path.exists():
+                    feature_path.unlink()
+            else:
+                write_bytes_atomic(feature_path, original_features)
+            write_bytes_atomic(path, original_loop)
+            return reseal_failure(change_id, [str(exc)], semantic_change=True)
+    else:
+        write_json_atomic(path, updated)
     emit_json(
         {
             "schema_version": SCHEMA_LOOP,
@@ -3005,7 +3643,9 @@ def cmd_reseal(args: argparse.Namespace) -> int:
             "path": str(path),
             "migrated": legacy,
             "semantic_change": semantic_change,
-            "revision_charged": False,
+            "revision_charged": revision_charged,
+            "stamp_source": stamp_source if semantic_change else None,
+            "charged_cycle_stamps": updated["stamp_state"]["charged_cycle_stamps"],
             "changed_fields": changed_fields,
             "budget_advisories": [],
             "autonomy": updated["autonomy"],
@@ -3368,6 +4008,11 @@ def cmd_record(args: argparse.Namespace) -> int:
         for item in args.changed_file
         if item and item.strip()
     ]
+    if args.kind == "apply" and any(
+        re.fullmatch(r"openspec/changes/[^/]+/tasks\.md", item)
+        for item in changed_files
+    ):
+        raise ValueError("Apply workers and direct Apply may not edit tasks.md")
     evidence = [item.strip() for item in args.evidence if item and item.strip()]
     if args.kind == "apply":
         prior_apply_count = sum(
@@ -3542,13 +4187,15 @@ def amendment_chain(ledger: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def productive_revision_count(ledger: dict[str, Any]) -> int:
-    """Count revisions that actually executed work.
-
-    A seal that drifted before its first attempt consumed no budget, so it must
-    not shorten the change's remaining revisions.
-    """
+    """Count fingerprint episodes that executed new work for diagnostics."""
     return sum(
-        1 for episode in ledger.get("episodes", []) if attempts_for_episode(episode)
+        1
+        for episode in ledger.get("episodes", [])
+        if any(
+            attempt.get("kind") in {"apply", "explore"}
+            and isinstance(attempt.get("result"), str)
+            for attempt in attempts_for_episode(episode)
+        )
     )
 
 
@@ -3730,7 +4377,6 @@ def gate_reasons(
     prospective_subagent_ids: list[str],
 ) -> list[str]:
     reasons: list[str] = []
-    run_attempts = run.get("attempts", [])
     revision_attempts = attempts_for_episode(episode)
     change_attempts = attempts_for_change(ledger)
     task_budget = task_budget or budgets["task"]
@@ -3741,25 +4387,22 @@ def gate_reasons(
     # selected ref's task budget (plus ref-local unblock authority) owns Apply
     # count gating, so aggregate totals cannot starve an independent ready ref.
 
-    revision_minutes = active_seconds(revision_attempts) / 60
-    change_minutes = active_seconds(change_attempts) / 60
-    if revision_minutes >= revision_budget["max_active_minutes"]:
-        reasons.append(
-            f"revision_active_minutes_reached:{revision_budget['max_active_minutes']}"
-        )
-    if change_minutes >= change_budget["max_active_minutes"]:
-        reasons.append(
-            f"change_active_minutes_reached:{change_budget['max_active_minutes']}"
-        )
+    if next_kind in NEW_WORK_KINDS:
+        revision_minutes = active_seconds(revision_attempts) / 60
+        change_minutes = active_seconds(change_attempts) / 60
+        if revision_minutes >= revision_budget["max_active_minutes"]:
+            reasons.append(
+                f"revision_active_minutes_reached:{revision_budget['max_active_minutes']}"
+            )
+        if change_minutes >= change_budget["max_active_minutes"]:
+            reasons.append(
+                f"change_active_minutes_reached:{change_budget['max_active_minutes']}"
+            )
 
     # Legacy hard-ceiling policy is retained for diagnostics and migration.
     # It is not a change-wide Apply stop; an exhaustible stop budget belongs to
     # the affected ref's unblock latch and cannot stop independent ready refs.
     _ = hard_ceiling
-
-    revision_count = productive_revision_count(ledger)
-    if revision_count > change_budget["max_revisions"]:
-        reasons.append(f"change_max_revisions_exceeded:{change_budget['max_revisions']}")
 
     # Runtime IDs and headcount are observable capacity signals only.  Apply
     # authority is bounded by iteration/minute/breaker and write topology, not
@@ -3801,8 +4444,16 @@ def gate_reasons(
         elif len(prior) == 1:
             reasons.extend(second_unblock_reasons(revision_attempts, next_ref))
 
-    if len(run_attempts) >= 2:
-        last_two = run_attempts[-2:]
+    breaker_attempts = [
+        attempt
+        for attempt in revision_attempts
+        if next_kind in NEW_WORK_KINDS
+        and attempt.get("ref") == next_ref
+        and attempt.get("kind") == next_kind
+        and isinstance(attempt.get("result"), str)
+    ]
+    if len(breaker_attempts) >= 2:
+        last_two = breaker_attempts[-2:]
         fingerprints = [
             attempt.get("result_fingerprint") or attempt.get("error_fingerprint")
             for attempt in last_two
@@ -3819,6 +4470,8 @@ def gate_reasons(
 
 
 def cmd_gate(args: argparse.Namespace) -> int:
+    if args.kind in REF_REQUIRED_GATE_KINDS and not args.ref:
+        raise ValueError(f"gate --kind {args.kind} requires --ref")
     _, config, fingerprint, ledger_path, budgets, warnings = resolve_runtime_policy(args)
     ceiling = hard_ceiling_of(config)
     # Per-run overrides retain their ordinary minute semantics. A legacy
@@ -3891,6 +4544,7 @@ def cmd_summary(args: argparse.Namespace) -> int:
     attempts = run.get("attempts", [])
     revision_attempts = attempts_for_episode(episode)
     change_attempts = attempts_for_change(ledger)
+    stamp_state = stamp_state_of(config, fingerprint)
     per_ref: dict[str, dict[str, int]] = {}
     for attempt in attempts:
         ref = attempt.get("ref") or "unknown"
@@ -3913,6 +4567,16 @@ def cmd_summary(args: argparse.Namespace) -> int:
             "change_active_seconds": active_seconds(change_attempts),
             "revision_count": productive_revision_count(ledger),
             "revision_count_total": len(ledger.get("episodes", [])),
+            "chapter_id": stamp_state["chapter_id"],
+            "semantic_stamps_in_chapter": stamp_state[
+                "semantic_stamps_in_chapter"
+            ],
+            "charged_cycle_stamps": stamp_state["charged_cycle_stamps"],
+            "cycle_stamps_remaining": max(
+                budgets["change"]["max_revisions"]
+                - stamp_state["charged_cycle_stamps"],
+                0,
+            ),
             "amendment_chain": amendment_chain(ledger),
             "budgets": budgets,
             "autonomy": autonomy_of(config),
@@ -4023,6 +4687,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reseal.add_argument("--allow-semantic-change", action="store_true")
     reseal.add_argument("--confirmed", action="store_true")
+    reseal.add_argument("--stamp-source", choices=STAMP_SOURCES)
+    reseal.add_argument("--ref")
+    reseal.add_argument("--candidate-tasks", type=Path)
     reseal.add_argument("--narrative-policy", choices=NARRATIVE_POLICIES)
     reseal.add_argument("--reason")
     reseal.add_argument("--set-max-revisions", type=int)
@@ -4107,7 +4774,7 @@ def build_parser() -> argparse.ArgumentParser:
     gate.add_argument("--contract-fingerprint")
     gate.add_argument("--run-id", default="default")
     gate.add_argument("--ref")
-    gate.add_argument("--kind")
+    gate.add_argument("--kind", choices=GATE_KINDS, required=True)
     gate.add_argument("--ledger-path", type=Path)
     gate.add_argument("--subagent-id", action="append", default=[])
     gate.add_argument("--current-allocated-subagents", type=int)

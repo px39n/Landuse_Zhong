@@ -1,0 +1,76 @@
+{
+  "schema_version": "openspec-loop.v3",
+  "change_id": "openspec-loop-completion-right",
+  "contract_fingerprint": "8b8bc906d6d3db7379ef2f5ee931250849c1515185ed017e0cafcab0d9a15d86",
+  "narrative_digest": "f00cc2335d170697da2376aa20753b68f66c3e8fb11a418af253126b1632662f",
+  "narrative_policy": "advisory",
+  "autonomy": "supervised",
+  "retention": "thin",
+  "paths": {
+    "ledger": "test_cache/openspec-loop-completion-right/loop/ledger.json",
+    "scratch": "test_cache/openspec-loop-completion-right/",
+    "product": null,
+    "bundle": "auto_test_openspec/openspec-loop-completion-right/",
+    "gui_colab": null
+  },
+  "retention_profile": {
+    "retained": "auto_test_openspec/openspec-loop-completion-right/",
+    "disposable": "test_cache/openspec-loop-completion-right/",
+    "pytest_basetemp": "test_cache/openspec-loop-completion-right/pytest/",
+    "scratch": "test_cache/openspec-loop-completion-right/",
+    "product": null,
+    "gui_colab": null
+  },
+  "budgets": {
+    "task": {
+      "max_apply_attempts": 2,
+      "max_unblock_runs": 2
+    },
+    "revision": {
+      "max_explore_runs": 1,
+      "max_subagents": 2,
+      "max_active_minutes": 120
+    },
+    "change": {
+      "max_revisions": 3,
+      "max_active_minutes": 360
+    }
+  },
+  "per_ref_budgets": {
+    "R1": {
+      "max_apply_attempts": 2,
+      "max_unblock_runs": 2
+    },
+    "R2": {
+      "max_apply_attempts": 2,
+      "max_unblock_runs": 2
+    },
+    "R3": {
+      "max_apply_attempts": 2,
+      "max_unblock_runs": 2
+    }
+  },
+  "test_profiles": {
+    "attempt": "targeted owner tests; no retained bundle",
+    "promotion": "complete task TEST exactly once before PASS",
+    "final": "whole-change verification plus strict OpenSpec validation",
+    "audit": "legacy monitor only when retention=full or explicitly required"
+  },
+  "initialized_from": "thin-default",
+  "stamp_state": {
+    "chapter_id": "fb191bba10af18dffb874dd1e50a3b093127b34a69cba1af6bcd68c740ba96d3",
+    "semantic_stamps_in_chapter": 1,
+    "charged_cycle_stamps": 0,
+    "self_confirmed_refs": {},
+    "last_stamp": {
+      "stamp_source": "interviewer_confirmed",
+      "source_fingerprint": "fb191bba10af18dffb874dd1e50a3b093127b34a69cba1af6bcd68c740ba96d3",
+      "target_fingerprint": "8b8bc906d6d3db7379ef2f5ee931250849c1515185ed017e0cafcab0d9a15d86",
+      "ref": null,
+      "charged": false,
+      "reason": "fix R2 promotion test boundary before execution; mirrors remain R3-owned",
+      "recorded_at_utc": "2026-09-01T03:21:50Z"
+    }
+  },
+  "resealed_at": "2026-09-01T03:21:50Z"
+}

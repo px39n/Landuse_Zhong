@@ -140,7 +140,11 @@ flowchart TD
   U["User intent / accepted amendment"] --> I["$openspec-change-interviewer"]
   I --> C["proposal + design + specs + tasks + interview"]
   C --> F["$openspec-feature-list / generate feature_list.json"]
-  F --> CP["openspec validate + loop check / plan"]
+  F --> AL["per-call alignment\nACCEPT + spec + loop.json + skill"]
+  AL --> SC{"semantic stamp class"}
+  SC -->|"chapter-outside / free"| CP["current fingerprint admitted\ncheck / plan"]
+  SC -->|"cycle / charged"| CB["charged_cycle_stamps gate"]
+  CB --> CP
   CP --> S["proactive scan -> routing[] + dispatch_refs"]
   S --> D{"routing.decision"}
 
@@ -162,7 +166,9 @@ flowchart TD
   ST -->|"BLOCKED or DEVIATED"| UB["$openspec-unblock-research\nin-process / spawn=0"]
   UB -->|"retry"| NG["fresh gate + fresh Apply packet"]
   UB -->|"targeted_probe"| TP["in-process probe default\noptional one read-only spawn"]
-  UB -->|"amend_spec or supersede_task"| I
+  UB -->|"amend_spec + green same-ref window"| SR["one unblock_self_confirm\nnon-widening candidate"]
+  SR --> CB
+  UB -->|"deny-list / second unblock / supersede"| I
   UB -->|"stop_budget"| RS["stop affected ref only"]
   NG --> CP
   TP --> ST
@@ -188,7 +194,8 @@ flowchart TD
 ```text
 interviewer
   -> proposal/design/specs/tasks/interview
-  -> feature_list -> validate -> check/plan -> routing[] + dispatch_refs
+  -> feature_list -> per-call alignment -> semantic stamp classification
+  -> current fingerprint admitted -> check/plan -> routing[] + dispatch_refs
      ├─ direct zpy (agent=null) -------------------------------┐
      └─ filter decision=dispatch && agent!=null                |
         -> host_batch_refs -> one host batch -> one-shot packet|
@@ -199,7 +206,8 @@ interviewer
                      └─ BLOCKED|DEVIATED -> in-process unblock
                           ├─ retry -> fresh gate/packet
                           ├─ targeted_probe -> in-process default
-                          ├─ amend/supersede -> interviewer/reseal
+                           ├─ first amend + green window -> one charged self-restamp
+                           ├─ deny-list/second unblock/supersede -> interviewer
                           └─ stop_budget -> affected ref only
   -> no ready refs -> goals -> design-verify(observation)
      -> whole-change verify + mirror check + strict validate
@@ -210,6 +218,7 @@ interviewer
 | 阶段 | Skill / capability | Tool 或 CLI | 读取的 authority | 产出 / 写者 | 下一步 |
 |---|---|---|---|---|---|
 | 合同修订 | `$openspec-change-interviewer` | `openspec validate`、feature generator、confirmed semantic `reseal` | proposal/design/specs/tasks + user decision | contract、`interview.md`、registry/fingerprint；interviewer/supervisor 写 | `check/plan` |
+| Stamp admission | sole Loop supervisor | semantic `reseal` / `apply-revision` | ACCEPT、current chapter、ledger work state、`stamp_state` | admitted fingerprint + free/charged decision；supervisor 写 | `check/plan` |
 | 完整性锁 | `$openspec-loop-engineering` | `check`、`plan --batch` | `tasks.md`、`feature_list.json`、`loop.json` | census、wave、`routing[]`、`dispatch_refs`；helper 计算 | proactive scan |
 | direct 分支 | local `zpy` | same-process Apply boundary | direct route、scope、gate | 无 agent envelope；terminal result | supervisor record/join |
 | host 分支 | Codex/Cursor native adapter | filter `host_batch_refs`，fresh Task/spawn | 仅 `decision=dispatch && agent!=null` routes | 一个 batch、每 ref 一个 packet/result；host 写 result，不写 ledger | `supervisor_join` |
@@ -422,6 +431,13 @@ feature state 和新 plan。
   `selected_batch`，清空 wave；`supervised` 暂停问人，`full_auto` 由 supervisor
   记录 `--reason` 后 restamp。若同时改变不可逆政策，仍需人类确认。
 
+`ACCEPT` 是执行章开头的验收尺子；一个执行章是整份 active registry 的已获准
+fingerprint，不是一条 task 或一次 Apply。`apply-revision`、本章已有 Apply/Unblock
+之后的义务改写、以及未 drain 章内第二次及以后的 semantic reseal 是循环 stamp。
+首次执行前或上一章完全终态后的 confirmed interviewer stamp 是章外 stamp。默认
+`max_revisions=3` 只限制同章循环 stamp，不按任务数增长；`--confirmed` 不能把章内
+stamp 变成免费。
+
 勾选 checkbox 不是漂移。promotion 只改变完成状态，不改变 active obligation，
 因此也不需要 stamp。
 
@@ -447,9 +463,20 @@ Apply 次数权威只有各 ref 的 `max_apply_attempts`，以及该 ref 进入
 Apply。提高已激活的 ref-local unblock allowance 需要适用 authority 和记录 reason；
 stamp 不能给已耗尽 ref 续命。
 
-可选 active minutes 与 breakers 可以暂停实际派出，但 revision/change iteration、
-headcount 或 legacy ceiling 都不能变成调度器。常见 breaker 包括重复 result
-fingerprint、连续 no-progress 和重复 semantic deviation。
+新 seal/缺省 init 的默认是 Apply `2`、Unblock `2`、循环 stamp `3`；有 prior 的
+reseal 继承已记录值，所以 change-local `1`、`5`、`14` 都不是默认。
+`max_revisions` 只在 charged semantic stamp 写 authority 文件前检查；当前 fingerprint
+一旦匹配即已获准，普通 Apply/Explore 不重查，降帽也不追溯撤销。
+
+Active minutes 与 generic breakers 只暂停 `apply|explore` 新工作。breaker 只观察当前
+episode、同 ref、同 kind 的最后两条 terminal records。record/join/Verify/promote、
+sync/goals/design-verify/summary/stop-hook/review 是 completion right；Unblock 只看本 ref
+blocking evidence、`max_unblock_runs` 与第二次新证据规则。
+
+首个 same-ref blocking/`amend_spec` 窗允许 sole supervisor 用一次带 reason 的
+`stamp_source=unblock_self_confirm`，只收窄/纠错本 ref ACCEPT/TEST/FILES 且
+WRITE_SCOPE 不扩。Apply worker 永不写 tasks。放宽标准、改其他 ref/DAG/框架政策/
+预算/外部权限，或第二次 Unblock，一律回 interviewer。
 
 legacy `hard_ceiling` 只剩可选的 minutes/self-extension policy data：它不是普通
 dispatch stop，也不过滤 `selected_wave` 或消费 `apply_remaining`，更不是普通开工
