@@ -74,6 +74,48 @@ execution.
 The ledger is never a second spec. It stores fingerprints, counters, durations,
 and dispositions, not logs or product evidence.
 
+## Execution chapters and semantic stamps
+
+`ACCEPT` is the exact admitted acceptance text for one execution chapter. One
+current `contract_fingerprint` identifies the whole active registry; it is not
+one task, Apply, or ACCEPT clause. Before every active Loop CLI or
+Apply/Verify/Unblock skill call, align that ACCEPT, applicable main/delta
+requirements, `loop.json`, this canonical skill, and whether the action is
+semantic admission, new work, closure, or unblock. Same-turn reuse is valid
+only while fingerprint, narrative digest, and canonical skill state remain
+unchanged. This integrity latch creates no new command or receipt.
+
+New/omitted seal policy defaults to per-ref Apply `2`, per-ref Unblock `2`, and
+change cycle stamps `3`. Task count never scales the stamp cap. A prior explicit
+value is inherited when reseal omits its override; change-local values such as
+`1`, `5`, or `14` are not defaults.
+
+A charged cycle stamp is `apply-revision`, an obligation-changing semantic
+reseal after the current chapter has Apply/Unblock work, or the second/later
+semantic reseal in an undrained chapter. The first confirmed pre-execution
+stamp, or a confirmed interviewer stamp after every prior ref is terminal,
+opens a chapter outside the cycle counter. `--confirmed` alone never makes an
+in-loop stamp free. Default `max_revisions=3` permits three charged stamps and
+rejects the fourth before tasks, feature state, or loop state changes.
+
+Once `loop.json.contract_fingerprint` matches the registry, the chapter is
+admitted. Ordinary gate never checks `max_revisions`; a later cap reduction
+does not revoke the chapter. Apply/Explore are new work and may be stopped by
+active minutes, their kind allowance, and a breaker limited to the current
+episode/ref/kind's last two terminal records. Record/join/Verify/promote,
+sync/goals/design-verify/summary/stop-hook/review are closure and ignore those
+broad stops while retaining their own prerequisites. Unblock checks only the
+selected ref's blocking evidence, local allowance, and second-run evidence.
+
+Apply workers, including direct Apply, never edit `tasks.md`. In a current
+same-ref blocking or `amend_spec` window, the sole supervisor may use one
+reasoned `stamp_source=unblock_self_confirm` semantic reseal per ref/source
+episode, without `--confirmed`. It may only make a mechanically non-widening
+ACCEPT/TEST/FILES correction inside unchanged WRITE_SCOPE. Other refs, passed
+ACCEPT, DAG, framework policy, widened acceptance, budget raises, product/
+external/Git authority, and a second-Unblock self-restamp return to
+`$openspec-change-interviewer`.
+
 ## Routing and execution latch
 
 Before routing every non-trivial intent or evidence-created work split, run the
@@ -112,6 +154,10 @@ The local writer allowlist in `references/role-adapter-matrix.md` is strict:
 - only `browser-qa-runner` and `e2e-artifact-runner` write to an already
   approved evidence root
 - every other dispatched role is read-only
+
+No Apply role may write `openspec/changes/<change-id>/tasks.md`; semantic task
+changes belong to the interviewer, full-auto `apply-revision`, or the bounded
+sole-supervisor blocking-window exception above.
 
 After gate returns continue for any `dispatch_refs`, the next substantive
 action in the same turn must be Apply. Do not end with a summary, suggestion,
@@ -167,6 +213,9 @@ Drain the ready queue rather than stopping after one task:
    resumes the failed Apply or spawns explorer/mapper/verifier/review. Exhaustion
    marks only that ref `maxed|stop_budget`; unrelated ready refs and later waves
    remain eligible.
+   A first unblock disposition `amend_spec` MAY enter the bounded
+   `unblock_self_confirm` latch. A second unblock is terminal adjudication and
+   MUST NOT self-restamp or default to a third Apply.
 10. Re-plan after each joined wave and continue independent work. When no ready
    task remains, close at the design level before claiming
    completion: run `goals <change-id>` for the coverage matrix, then
@@ -214,6 +263,10 @@ hooks, read-only research/review, supervisor Verify, and `zpy` direct routing
 consume zero Apply and zero scheduling headcount. Explicit legacy `rose` direct
 routing remains zero-headcount compatibility only.
 
+`change.max_revisions` is the current chapter's charged cycle-stamp allowance,
+not a task/Apply/ACCEPT count and not an ordinary gate reason. Only actual
+budget increases consume optional `max_self_extensions`; decreases do not.
+
 Time means recorded active tool/runtime duration, not time spent waiting for a
 user. Two identical result fingerprints, two consecutive `no_progress`
 outcomes, or two repeated semantic deviations trigger a breaker.
@@ -250,7 +303,7 @@ confirmation; no Loop raises it by itself.
 | action | `supervised` (default) | `full_auto` |
 |---|---|---|
 | raise an activated ref-local unblock ceiling or another recorded budget | explicit user authorization and a reason | supervisor may amend below unchanged irreversible policy with a recorded reason |
-| amend tasks after a design-level gap | pause and hand off to `$openspec-change-interviewer` | amend the registry, regenerate the index, then `reseal --allow-semantic-change --reason` |
+| amend tasks after a design-level gap | pause and hand off to `$openspec-change-interviewer`; only a green same-ref blocking window may use one reasoned `unblock_self_confirm` | amend the registry, regenerate the index, then charged `apply-revision` or semantic reseal with a reason |
 | raise optional `hard_ceiling`, or change retention, paths, or scope | human-confirmed `seal` | human-confirmed `seal` |
 
 Autonomy never widens repository authority. Regardless of mode, destructive

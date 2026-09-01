@@ -159,6 +159,28 @@ paths. An irreversible policy change alone requires explicit confirmation.
 Neither thin initialization nor optional preview/stamp diagnostics create
 ledger, scratch, product, bundle, or GUI/Colab directories.
 
+## Execution chapters and stamp classification
+
+`ACCEPT` is the task ruler admitted at the start of one whole-registry
+execution chapter. The initial ACCEPT, Apply/Verify/Unblock, promotion,
+checkbox/`STATE:`, and narrative reseal do not consume a cycle stamp. New and
+omitted policy defaults are Apply `2`, Unblock `2`, and chapter cycle stamps
+`3`; task count never scales the stamp cap, while omitted overrides inherit an
+existing change's recorded values.
+
+Before writing a semantic fingerprint, classify the stamp. `apply-revision`, a
+reseal after current-chapter Apply/Unblock work, and the second/later semantic
+reseal in an undrained chapter are charged. The first supervised confirmed
+semantic stamp before execution, or after all prior chapter refs are terminal,
+is chapter-outside and free. `--confirmed` by itself never makes a charged
+stamp free. The fourth charged stamp at the default cap is refused before
+authority files change; narrative reseal remains available.
+
+Once a fingerprint is current, ordinary gate does not recheck the stamp cap and
+a later reduction does not revoke it. Historical emergency values such as
+`max_unblock_runs=1` or `max_revisions=5|14` remain change-local inheritance,
+not repository defaults.
+
 ## Amendment during execution
 
 Narrative drift in `proposal.md`, `design.md`, or `specs/**` is not a semantic
@@ -178,8 +200,16 @@ When Loop reports semantic fingerprint drift, `DEVIATED`, `amend_spec`, or
 
 Under `autonomy: full_auto` the sole supervisor may amend the active registry
 and run `reseal --allow-semantic-change --reason <reason>`. Under `supervised`,
-return here for the material decision. Stay involved only for scope, retention,
-paths, output authority, or another decision reserved for the user.
+return here for the material decision except for the one bounded blocking-window
+exception: a non-passed same-ref `blocked|deviated` or `amend_spec` disposition
+may let the sole supervisor use one reasoned
+`stamp_source=unblock_self_confirm` candidate per source episode without
+`--confirmed`. It may only make a mechanically non-widening correction to that
+ref's ACCEPT/TEST/FILES inside unchanged WRITE_SCOPE. Any other ref, DAG,
+passed ACCEPT, acceptance widening, framework policy, budget raise, external/
+product/Git authority, or a second-Unblock self-restamp remains here. Stay
+involved only for scope, retention, paths, output authority, or another
+decision reserved for the user.
 
 Ref-local Apply/unblock exhaustion is local and cannot be reset by a stamp.
 Raising an activated ref-local ceiling requires the applicable authority and a

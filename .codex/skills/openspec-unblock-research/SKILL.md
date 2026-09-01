@@ -79,6 +79,9 @@ When called by `$openspec-loop-engineering`:
 
 - the sole supervisor invokes this skill in-process; unblock host spawn count is
   zero and this skill is not a third subordinate host or worker lane
+- before invocation, align the current ref ACCEPT, `loop.json`, applicable
+  requirements, this skill, and the unblock action class; `max_revisions`,
+  revision/change minutes, and generic result breakers do not gate diagnosis
 - default sink is `return_only`
 - at most two unblock runs per ref in one active fingerprint revision
 - the first is a repair decision; a second requires a completed second Apply
@@ -127,6 +130,16 @@ fingerprint without new evidence cannot enter the second unblock.
 
 The second unblock never starts a research swarm. Under the default two-Apply
 allowance it remains terminal adjudication only, as defined above.
+
+A first same-ref blocking window or disposition `amend_spec` may make the sole
+supervisor eligible for one reasoned
+`stamp_source=unblock_self_confirm` semantic reseal in that source fingerprint.
+This skill remains diagnosis-only and never edits `tasks.md`. The supervisor's
+candidate may only narrow or mechanically correct that ref's ACCEPT/TEST/FILES
+inside unchanged WRITE_SCOPE. Widening, framework policy, other refs, DAG,
+passed ACCEPT, budget raises, external/product/Git authority, or a repeated
+self-confirm returns to the interviewer. A second unblock MUST NOT self-restamp
+or default to retry under the two-Apply allowance.
 
 `amend_spec` and `supersede_task` pause Loop and return to
 `$openspec-change-interviewer`. Under `full_auto`, only the sole supervisor may

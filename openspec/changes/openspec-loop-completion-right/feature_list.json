@@ -1,0 +1,50 @@
+{
+  "schema_version": "openspec-feature-list.v2",
+  "change_id": "openspec-loop-completion-right",
+  "registry": {
+    "active_source": "tasks.md active registry",
+    "active_ref_count": 3,
+    "history_source": "git"
+  },
+  "features": {
+    "R1": {
+      "id": "1.1",
+      "ref": "R1",
+      "title": "Implement execution-chapter stamp accounting, completion right, and blocked-window self-restamp",
+      "state": "passed",
+      "passes": true,
+      "depends_on": [],
+      "supersedes": [],
+      "task_path": "tasks.md:14",
+      "accept_hash": "6d9125f97a6a37190e40563902d022c6b62b6dc1abc007bfb4ec204429c7e32f",
+      "test_hash": "4711dd0bc012958dd000eed746eb87d346bb545feaaa5468d28d3a2e097e02ef"
+    },
+    "R2": {
+      "id": "2.1",
+      "ref": "R2",
+      "title": "Align AGENTS, canonical skills, and public guide to chapter/stamp semantics",
+      "state": "passed",
+      "passes": true,
+      "depends_on": [],
+      "supersedes": [],
+      "task_path": "tasks.md:29",
+      "accept_hash": "af85ed3d51f27ca49e2b21d85dbdaadf3e363862a6c1786b2cddc7929f76daba",
+      "test_hash": "04875096e03f80b5bbae7bcdc025207fc5b48312a9ba88b2bc094d9dd1fdfe76"
+    },
+    "R3": {
+      "id": "3.1",
+      "ref": "R3",
+      "title": "Sync canonical mirrors and intelligently update openspec-loop-execution",
+      "state": "passed",
+      "passes": true,
+      "depends_on": [
+        "R1",
+        "R2"
+      ],
+      "supersedes": [],
+      "task_path": "tasks.md:44",
+      "accept_hash": "711ebe067972a83df7a68f5a01634d364d6648b5cbf37e59a4f50a6423c87f11",
+      "test_hash": "d3fa34c5985876d3db5ce29c549ad562fbd39e6e8e0a731c1a2037f5f183bfdd"
+    }
+  }
+}

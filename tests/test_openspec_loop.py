@@ -186,6 +186,12 @@ def test_missing_loop_auto_initializes_thin_defaults(tmp_path: Path) -> None:
         "R1": {"max_apply_attempts": 2, "max_unblock_runs": 2},
         "R2": {"max_apply_attempts": 2, "max_unblock_runs": 2},
     }
+    assert config["budgets"]["task"] == {
+        "max_apply_attempts": 2,
+        "max_unblock_runs": 2,
+    }
+    assert config["budgets"]["change"]["max_revisions"] == 3
+    assert config["stamp_state"]["charged_cycle_stamps"] == 0
     assert config["paths"] == {
         "ledger": "test_cache/demo/loop/ledger.json",
         "scratch": "test_cache/demo/tmp/",
@@ -1257,7 +1263,7 @@ def test_second_unblock_rejects_repeated_blocking_evidence(tmp_path: Path) -> No
     assert "second_unblock_requires_new_evidence:R0" in gate["reasons"]
 
 
-def test_gate_stops_after_two_no_progress_attempts_and_one_explore_budget(tmp_path: Path) -> None:
+def test_gate_scopes_no_progress_breaker_by_episode_ref_and_kind(tmp_path: Path) -> None:
     ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
     fingerprint = "xyz789"
 
@@ -1330,7 +1336,7 @@ def test_gate_stops_after_two_no_progress_attempts_and_one_explore_budget(tmp_pa
         "--ledger-path",
         str(ledger),
     )
-    no_progress_gate = run_loop(
+    mixed_kind_gate = run_loop(
         tmp_path,
         "gate",
         "demo",
@@ -1338,6 +1344,41 @@ def test_gate_stops_after_two_no_progress_attempts_and_one_explore_budget(tmp_pa
         fingerprint,
         "--run-id",
         "run-b",
+        "--ref",
+        "R6",
+        "--kind",
+        "apply",
+        "--ledger-path",
+        str(ledger),
+    )
+    assert mixed_kind_gate["decision"] == "continue"
+    assert "no_progress_breaker" not in mixed_kind_gate["reasons"]
+
+    run_loop(
+        tmp_path,
+        "record",
+        "demo",
+        "--contract-fingerprint",
+        fingerprint,
+        "--run-id",
+        "run-b",
+        "--ref",
+        "R6",
+        "--kind",
+        "apply",
+        "--result",
+        "no_progress",
+        "--ledger-path",
+        str(ledger),
+    )
+    no_progress_gate = run_loop(
+        tmp_path,
+        "gate",
+        "demo",
+        "--contract-fingerprint",
+        fingerprint,
+        "--run-id",
+        "another-run",
         "--ref",
         "R6",
         "--kind",
@@ -1547,6 +1588,10 @@ def test_gate_counts_active_duration_not_wall_clock_waiting(tmp_path: Path) -> N
         fingerprint,
         "--run-id",
         "run-waiting",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
         "--max-minutes",
         "120",
         "--ledger-path",
@@ -1568,6 +1613,10 @@ def test_gate_counts_active_duration_not_wall_clock_waiting(tmp_path: Path) -> N
         fingerprint,
         "--run-id",
         "run-waiting",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
         "--max-minutes",
         "1",
         "--ledger-path",
@@ -1602,6 +1651,10 @@ def test_gate_counts_active_duration_not_wall_clock_waiting(tmp_path: Path) -> N
         fingerprint,
         "--run-id",
         "run-waiting",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
         "--max-minutes",
         "1",
         "--ledger-path",
@@ -1704,7 +1757,7 @@ def test_plan_skips_maxed_task_and_selects_its_replacement(tmp_path: Path) -> No
     assert by_ref["R38"]["supersedes"] == ["R37"]
 
 
-def test_repeated_semantic_deviation_trips_result_breaker(tmp_path: Path) -> None:
+def test_verify_deviations_do_not_trip_an_apply_breaker(tmp_path: Path) -> None:
     ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
     for _ in range(2):
         run_loop(
@@ -1738,10 +1791,10 @@ def test_repeated_semantic_deviation_trips_result_breaker(tmp_path: Path) -> Non
         "apply",
         "--ledger-path",
         str(ledger),
-        expected_exit=2,
     )
-    assert "repeated_result_breaker" in gate["reasons"]
-    assert "repeated_deviation_breaker" in gate["reasons"]
+    assert gate["decision"] == "continue"
+    assert "repeated_result_breaker" not in gate["reasons"]
+    assert "repeated_deviation_breaker" not in gate["reasons"]
 
 
 def test_change_iterations_do_not_stop_a_new_revision_apply(tmp_path: Path) -> None:
@@ -1770,15 +1823,14 @@ def test_change_iterations_do_not_stop_a_new_revision_apply(tmp_path: Path) -> N
     )
     run_loop(
         tmp_path,
-        "seal",
+        "reseal",
         "demo",
+        "--allow-semantic-change",
         "--confirmed",
-        "--retention",
-        "thin",
-        "--ledger-path",
-        str(ledger),
-        "--max-total-active-minutes",
+        "--set-max-total-active-minutes",
         "1",
+        "--reason",
+        "open the next admitted fingerprint with a narrower minute budget",
     )
     gate = run_loop(
         tmp_path,
@@ -2055,7 +2107,7 @@ def write_ledger(path: Path, episodes: list[dict]) -> None:
     )
 
 
-def test_zero_attempt_episodes_do_not_consume_the_change_revision_budget(
+def test_historical_productive_episodes_do_not_gate_same_fingerprint_apply(
     tmp_path: Path,
 ) -> None:
     write_contract(
@@ -2109,7 +2161,7 @@ def test_zero_attempt_episodes_do_not_consume_the_change_revision_budget(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
 
-    exhausted = run_loop(
+    still_allowed = run_loop(
         tmp_path,
         "gate",
         "demo",
@@ -2121,9 +2173,447 @@ def test_zero_attempt_episodes_do_not_consume_the_change_revision_budget(
         "apply",
         "--ledger-path",
         str(ledger),
+    )
+    assert still_allowed["decision"] == "continue"
+    assert not any(
+        reason.startswith("change_max_revisions")
+        for reason in still_allowed["reasons"]
+    )
+
+
+def stamp_task_text(accept: str, *, second_ref: bool = False) -> str:
+    tail = """
+- [ ] 1.2 Independent sibling [#R2]
+  - INDEPENDENT: yes
+  - FILES: `src/b.py`
+  - WRITE_SCOPE: `src/b.py`
+  - ACCEPT: sibling remains exact.
+  - TEST: SCOPE: CLI
+    - Run: `python -c "pass"`
+""" if second_ref else ""
+    return f"""## Active Task Registry
+
+- [ ] 1.1 Runtime ref [#R1]
+  - INDEPENDENT: yes
+  - FILES: `src/a.py`
+  - WRITE_SCOPE: `src/a.py`
+  - ACCEPT: {accept}
+  - TEST: SCOPE: CLI
+    - Run: `python -c "pass"`
+{tail}"""
+
+
+def write_stamp_demo(tmp_path: Path, accept: str, *, second_ref: bool = False) -> Path:
+    entries = [("R1", "1.1", False, False)]
+    if second_ref:
+        entries.append(("R2", "1.2", False, False))
+    write_contract(tmp_path, "demo", stamp_task_text(accept, second_ref=second_ref), base_features(entries))
+    ledger = tmp_path / "test_cache" / "demo" / "loop" / "ledger.json"
+    seal_demo(
+        tmp_path,
+        ledger,
+        "--scratch-root",
+        "test_cache/demo/tmp",
+    )
+    return ledger
+
+
+def test_cycle_stamp_cap_charges_in_chapter_and_rejects_the_fourth_before_writes(
+    tmp_path: Path,
+) -> None:
+    write_stamp_demo(tmp_path, "exactly 2 rows MUST pass.")
+    change_dir = tmp_path / "openspec" / "changes" / "demo"
+    tasks_path = change_dir / "tasks.md"
+    feature_path = change_dir / "feature_list.json"
+    loop_path = change_dir / "loop.json"
+
+    # The first confirmed pre-execution semantic stamp is chapter-outside/free.
+    for index in range(1, 5):
+        tasks_path.write_text(
+            stamp_task_text(
+                "exactly 2 rows MUST pass. "
+                + " ".join(f"Gate {item} MUST remain." for item in range(1, index + 1))
+            ),
+            encoding="utf-8",
+        )
+        result = run_loop(
+            tmp_path,
+            "reseal",
+            "demo",
+            "--allow-semantic-change",
+            "--confirmed",
+            "--reason",
+            f"confirmed stamp {index}",
+        )
+        assert result["written"] is True
+
+    config = read_config(tmp_path)
+    assert config["stamp_state"]["semantic_stamps_in_chapter"] == 4
+    assert config["stamp_state"]["charged_cycle_stamps"] == 3
+
+    tasks_path.write_text(
+        stamp_task_text(
+            "exactly 2 rows MUST pass. "
+            + " ".join(f"Gate {item} MUST remain." for item in range(1, 6))
+        ),
+        encoding="utf-8",
+    )
+    before = {
+        "tasks": tasks_path.read_bytes(),
+        "feature": feature_path.read_bytes(),
+        "loop": loop_path.read_bytes(),
+    }
+    refused = run_loop(
+        tmp_path,
+        "reseal",
+        "demo",
+        "--allow-semantic-change",
+        "--confirmed",
+        "--reason",
+        "fourth charged cycle stamp",
         expected_exit=2,
     )
-    assert "change_max_revisions_exceeded:1" in exhausted["reasons"]
+    assert "change_cycle_stamp_budget_exhausted:3" in refused["issues"]
+    assert tasks_path.read_bytes() == before["tasks"]
+    assert feature_path.read_bytes() == before["feature"]
+    assert loop_path.read_bytes() == before["loop"]
+
+
+def test_completion_and_unblock_rights_ignore_minutes_and_generic_breakers(
+    tmp_path: Path,
+) -> None:
+    ledger = write_stamp_demo(tmp_path, "exactly 2 rows MUST pass.")
+    fingerprint = read_config(tmp_path)["contract_fingerprint"]
+    run_loop(
+        tmp_path,
+        "record",
+        "demo",
+        "--contract-fingerprint",
+        fingerprint,
+        "--run-id",
+        "closure",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--result",
+        "completed",
+        "--duration-seconds",
+        "61",
+        "--ledger-path",
+        str(ledger),
+    )
+    run_loop(
+        tmp_path,
+        "record",
+        "demo",
+        "--contract-fingerprint",
+        fingerprint,
+        "--run-id",
+        "closure",
+        "--ref",
+        "R1",
+        "--kind",
+        "review",
+        "--result",
+        "no_progress",
+        "--duration-seconds",
+        "61",
+        "--ledger-path",
+        str(ledger),
+    )
+
+    for kind in ("verify", "goal", "review", "stop_hook"):
+        args = [
+            "gate",
+            "demo",
+            "--run-id",
+            "closure",
+            "--kind",
+            kind,
+            "--max-minutes",
+            "1",
+            "--ledger-path",
+            str(ledger),
+        ]
+        if kind == "verify":
+            args.extend(["--ref", "R1"])
+        gate = run_loop(tmp_path, *args)
+        assert gate["decision"] == "continue"
+        assert not any("active_minutes" in reason for reason in gate["reasons"])
+
+    apply_gate = run_loop(
+        tmp_path,
+        "gate",
+        "demo",
+        "--run-id",
+        "closure",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--max-minutes",
+        "1",
+        "--ledger-path",
+        str(ledger),
+        expected_exit=2,
+    )
+    assert "revision_active_minutes_reached:1" in apply_gate["reasons"]
+
+    run_loop(
+        tmp_path,
+        "record",
+        "demo",
+        "--contract-fingerprint",
+        fingerprint,
+        "--run-id",
+        "closure",
+        "--ref",
+        "R1",
+        "--kind",
+        "verify",
+        "--result",
+        "blocked",
+        "--observation-text",
+        "new blocking evidence",
+        "--ledger-path",
+        str(ledger),
+    )
+    unblock = run_loop(
+        tmp_path,
+        "gate",
+        "demo",
+        "--run-id",
+        "closure",
+        "--ref",
+        "R1",
+        "--kind",
+        "unblock",
+        "--max-minutes",
+        "1",
+        "--ledger-path",
+        str(ledger),
+    )
+    assert unblock["decision"] == "continue"
+
+
+def test_gate_requires_kind_and_ref_for_ref_scoped_actions(tmp_path: Path) -> None:
+    ledger = write_stamp_demo(tmp_path, "exactly 2 rows MUST pass.")
+    missing_kind = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "--repo-root",
+            str(tmp_path),
+            "gate",
+            "demo",
+            "--ledger-path",
+            str(ledger),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert missing_kind.returncode == 2
+    assert "--kind" in missing_kind.stderr
+
+    missing_ref = run_loop(
+        tmp_path,
+        "gate",
+        "demo",
+        "--kind",
+        "verify",
+        "--ledger-path",
+        str(ledger),
+        expected_exit=2,
+    )
+    assert "requires --ref" in missing_ref["error"]
+
+
+def test_unblock_self_confirm_allows_one_narrow_same_ref_candidate(tmp_path: Path) -> None:
+    ledger = write_stamp_demo(tmp_path, "exactly 2 rows MUST pass.", second_ref=True)
+    config_before = read_config(tmp_path)
+    fingerprint = config_before["contract_fingerprint"]
+    run_loop(
+        tmp_path,
+        "record",
+        "demo",
+        "--contract-fingerprint",
+        fingerprint,
+        "--run-id",
+        "blocked",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--result",
+        "blocked",
+        "--observation-text",
+        "missing exact gate",
+        "--ledger-path",
+        str(ledger),
+    )
+    candidate = tmp_path / "test_cache" / "demo" / "tmp" / "candidate-tasks.md"
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    candidate.write_text(
+        stamp_task_text(
+            "exactly 2 rows MUST pass. The source hash MUST also match.",
+            second_ref=True,
+        ),
+        encoding="utf-8",
+    )
+    applied = run_loop(
+        tmp_path,
+        "reseal",
+        "demo",
+        "--allow-semantic-change",
+        "--stamp-source",
+        "unblock_self_confirm",
+        "--ref",
+        "R1",
+        "--candidate-tasks",
+        str(candidate),
+        "--reason",
+        "narrow R1 after blocked Apply",
+    )
+    assert applied["revision_charged"] is True
+    assert applied["charged_cycle_stamps"] == 1
+    config_after = read_config(tmp_path)
+    assert config_after["stamp_state"]["self_confirmed_refs"][fingerprint] == ["R1"]
+    assert config_after["budgets"] == config_before["budgets"]
+    assert "source hash MUST also match" in (
+        tmp_path / "openspec" / "changes" / "demo" / "tasks.md"
+    ).read_text(encoding="utf-8")
+
+
+def test_unblock_self_confirm_rejects_widening_and_keeps_authority_files(
+    tmp_path: Path,
+) -> None:
+    ledger = write_stamp_demo(tmp_path, "exactly 2 rows MUST pass.")
+    fingerprint = read_config(tmp_path)["contract_fingerprint"]
+    run_loop(
+        tmp_path,
+        "record",
+        "demo",
+        "--contract-fingerprint",
+        fingerprint,
+        "--run-id",
+        "blocked",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--result",
+        "blocked",
+        "--observation-text",
+        "missing exact gate",
+        "--ledger-path",
+        str(ledger),
+    )
+    change_dir = tmp_path / "openspec" / "changes" / "demo"
+    candidate = tmp_path / "test_cache" / "demo" / "tmp" / "widened.md"
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    candidate.write_text(stamp_task_text("rows may pass."), encoding="utf-8")
+    before = {
+        name: (change_dir / name).read_bytes()
+        for name in ("tasks.md", "feature_list.json", "loop.json")
+    }
+    refused = run_loop(
+        tmp_path,
+        "reseal",
+        "demo",
+        "--allow-semantic-change",
+        "--stamp-source",
+        "unblock_self_confirm",
+        "--ref",
+        "R1",
+        "--candidate-tasks",
+        str(candidate),
+        "--reason",
+        "attempt to relax acceptance",
+        expected_exit=2,
+    )
+    assert any("accept_widening" in issue for issue in refused["issues"])
+    for name, payload in before.items():
+        assert (change_dir / name).read_bytes() == payload
+
+
+def test_unblock_self_confirm_rejects_a_second_same_ref_source_stamp(
+    tmp_path: Path,
+) -> None:
+    ledger = write_stamp_demo(tmp_path, "exactly 2 rows MUST pass.")
+    fingerprint = read_config(tmp_path)["contract_fingerprint"]
+    run_loop(
+        tmp_path,
+        "record",
+        "demo",
+        "--contract-fingerprint",
+        fingerprint,
+        "--run-id",
+        "blocked",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--result",
+        "blocked",
+        "--observation-text",
+        "missing exact gate",
+        "--ledger-path",
+        str(ledger),
+    )
+    loop_path = tmp_path / "openspec" / "changes" / "demo" / "loop.json"
+    config = read_config(tmp_path)
+    config["stamp_state"]["self_confirmed_refs"] = {fingerprint: ["R1"]}
+    loop_path.write_text(
+        json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    candidate = tmp_path / "test_cache" / "demo" / "tmp" / "repeat.md"
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    candidate.write_text(
+        stamp_task_text("exactly 2 rows MUST pass. One more gate MUST hold."),
+        encoding="utf-8",
+    )
+    refused = run_loop(
+        tmp_path,
+        "reseal",
+        "demo",
+        "--allow-semantic-change",
+        "--stamp-source",
+        "unblock_self_confirm",
+        "--ref",
+        "R1",
+        "--candidate-tasks",
+        str(candidate),
+        "--reason",
+        "repeat",
+        expected_exit=2,
+    )
+    assert any("self_restamp_already_used" in issue for issue in refused["issues"])
+
+
+def test_apply_record_cannot_claim_a_tasks_md_write(tmp_path: Path) -> None:
+    ledger = write_stamp_demo(tmp_path, "exactly 2 rows MUST pass.")
+    refused = run_loop(
+        tmp_path,
+        "record",
+        "demo",
+        "--run-id",
+        "worker",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--result",
+        "completed",
+        "--changed-file",
+        "openspec/changes/demo/tasks.md",
+        "--ledger-path",
+        str(ledger),
+        expected_exit=2,
+    )
+    assert "may not edit tasks.md" in refused["error"]
 
 
 def seal_ceiling_demo(tmp_path: Path, *extra: str) -> Path:
@@ -2290,6 +2780,44 @@ def test_reseal_refuses_a_further_extension_once_self_extensions_are_used(
     )
     assert any("max_self_extensions reached: 1" in issue for issue in exhausted["issues"])
     assert read_config(tmp_path)["budgets"]["change"]["max_revisions"] == 4
+
+
+def test_budget_reduction_is_not_a_self_extension_or_admission_revocation(
+    tmp_path: Path,
+) -> None:
+    ledger = seal_ceiling_demo(
+        tmp_path,
+        "--max-revisions",
+        "5",
+        "--hard-ceiling-max-self-extensions",
+        "1",
+    )
+    reduced = run_loop(
+        tmp_path,
+        "reseal",
+        "demo",
+        "--set-max-revisions",
+        "2",
+        "--confirmed",
+        "--reason",
+        "reduce an emergency umbrella",
+    )
+    assert reduced["self_extensions_used"] == 0
+    assert read_config(tmp_path)["budgets"]["change"]["max_revisions"] == 2
+    gate = run_loop(
+        tmp_path,
+        "gate",
+        "demo",
+        "--run-id",
+        "after-reduction",
+        "--ref",
+        "R1",
+        "--kind",
+        "apply",
+        "--ledger-path",
+        str(ledger),
+    )
+    assert gate["decision"] == "continue"
 
 
 def test_autonomy_supervised_requires_confirmation_but_full_auto_records_a_reason(
@@ -3644,6 +4172,7 @@ def test_full_auto_can_apply_revision_without_an_interview(tmp_path: Path) -> No
     # The sandbox holds no OpenSpec project, so the validator is absent rather
     # than failing; the real-repo path is exercised by the change's final task.
     assert applied["strict_validation"] == "unavailable"
+    assert read_config(tmp_path)["stamp_state"]["charged_cycle_stamps"] == 1
 
     tasks_text = (tmp_path / "openspec" / "changes" / "demo" / "tasks.md").read_text(
         encoding="utf-8"
@@ -3653,6 +4182,47 @@ def test_full_auto_can_apply_revision_without_an_interview(tmp_path: Path) -> No
     assert "## Design goals" in tasks_text
     assert tasks_text.index("[#R3]") < tasks_text.index("## Design goals")
     assert run_loop(tmp_path, "check", "demo")["ok"] is True
+
+
+def test_apply_revision_rejects_an_exhausted_cycle_stamp_before_any_write(
+    tmp_path: Path,
+) -> None:
+    seal_revisable_demo(tmp_path, "--autonomy", "full_auto")
+    change_dir = tmp_path / "openspec" / "changes" / "demo"
+    loop_path = change_dir / "loop.json"
+    config = read_config(tmp_path)
+    config["stamp_state"]["charged_cycle_stamps"] = 3
+    config["stamp_state"]["semantic_stamps_in_chapter"] = 3
+    loop_path.write_text(
+        json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    proposal = write_proposal(
+        tmp_path,
+        [
+            {
+                "action": "add",
+                "title": "blocked fourth cycle",
+                "depends_on": [],
+                "accept": "the manifest remains exact",
+                "test": ["python -c \"pass\""],
+            }
+        ],
+    )
+    before = {
+        name: (change_dir / name).read_bytes()
+        for name in ("tasks.md", "feature_list.json", "loop.json")
+    }
+    refused = run_loop(
+        tmp_path,
+        "apply-revision",
+        "demo",
+        "--proposal",
+        str(proposal),
+        expected_exit=2,
+    )
+    assert "change_cycle_stamp_budget_exhausted:3" in refused["issues"]
+    for name, payload in before.items():
+        assert (change_dir / name).read_bytes() == payload
 
 
 def test_supervised_autonomy_refuses_to_apply_revision(tmp_path: Path) -> None:
@@ -3814,7 +4384,15 @@ def test_semantic_seal_no_longer_reports_task_derived_apply_shortfall(
     seal_demo(tmp_path, ledger, "--max-total-active-minutes", "24")
 
     write_large_registry(tmp_path, 19)
-    restamped = run_loop(tmp_path, "seal", "demo", "--confirmed")
+    restamped = run_loop(
+        tmp_path,
+        "reseal",
+        "demo",
+        "--allow-semantic-change",
+        "--confirmed",
+        "--reason",
+        "chapter-outside registry growth keeps the prior runtime policy",
+    )
 
     assert restamped["semantic_change"] is True
     assert restamped["budget_advisories"] == []
@@ -3862,7 +4440,15 @@ def test_restamp_does_not_warn_when_remaining_work_fits(
     seal_demo(tmp_path, ledger, "--max-total-active-minutes", "24")
 
     write_mixed_registry(tmp_path, passed=13, pending=6)
-    restamped = run_loop(tmp_path, "seal", "demo", "--confirmed")
+    restamped = run_loop(
+        tmp_path,
+        "reseal",
+        "demo",
+        "--allow-semantic-change",
+        "--confirmed",
+        "--reason",
+        "chapter-outside mixed registry restamp",
+    )
 
     assert restamped["semantic_change"] is True
     assert restamped["budget_advisories"] == []
