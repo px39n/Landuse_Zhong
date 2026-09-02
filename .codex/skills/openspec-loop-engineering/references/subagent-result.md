@@ -6,6 +6,8 @@ final PASS authority.
 
 ```text
 CANONICAL RESULT:
+result_schema: openspec-apply-result.v1
+receipt_id:
 agent: agents/<agent-id>
 result_id:
 trace_id:
@@ -14,7 +16,7 @@ role_id:
 local_entry:
 ref:
 apply_attempt:
-status: completed | failed | partial | blocked | unverified
+status: completed | failed | partial | blocked | deviated | unverified
 confidence: HIGH | MED | LOW | VERY LOW | UNKNOWN
 declared_repository:
 artifact_destination:
@@ -50,15 +52,18 @@ verification:
 ## Rules
 
 - Evidence must support the reported status.
-- `agent`, `package_id`, `role_id`, `ref`, and `apply_attempt` must match the
+- `receipt_id`, `agent`, `package_id`, `role_id`, `ref`, and `apply_attempt` must match the
   dispatch packet.
 - Portable evidence is required. An opaque runtime-private id cannot be the
   only completion proof.
 - Keep raw logs, broad dumps, and full files out of the result.
 - A no-finding result still reports inspected scope, checks, freshness, skipped
   checks, blockers, risks, and `unverified` items.
-- The result does not issue final PASS, acceptance, promotion, or integration.
-- A terminal `failed`, empty, `partial`, `blocked`, or `unverified` result does not authorize automatic redispatch, old-context resume, role swap, or scope expansion.
+- The result does not issue final PASS, acceptance, promotion, integration, or
+  a next action. The supervisor's typed `record --receipt` is the join event.
+- A terminal `failed`, empty, `partial`, `blocked`, `deviated`, or `unverified`
+  result does not authorize automatic redispatch, old-context resume, role
+  swap, or scope expansion.
 - Every result is terminal for its native host task/thread context. It returns
   only what the supervisor needs for join and later Verify selection, then the
   context closes; no continuation or resume recommendation is emitted.

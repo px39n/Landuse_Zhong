@@ -40,6 +40,11 @@ Each active entry contains only:
 - `accept_hash`
 - `test_hash`
 
+Optional compact execution fields are copied only when declared:
+
+- `repair_policy` from `REPAIR_POLICY: bounded-r1`
+- `test_level` from `TEST_LEVEL: smoke|pilot|production|canary`
+
 States are `pending | ready | in_progress | blocked | deviated | maxed |
 superseded | passed`.
 
@@ -51,15 +56,15 @@ validation succeeds.
 
 ## After generation
 
-Run an advisory plan to inspect selection without claiming execution authority:
+Run shadow next to inspect the compact action without claiming execution authority:
 
 ```powershell
-python scripts/openspec_loop.py --repo-root . plan <change-id> --advisory
+python scripts/openspec_loop.py --repo-root . next <change-id> --intent drain --run-id <id> --shadow
 ```
 
 Generating the registry alone does not authorize implementation. Ordinary Loop
-execution requires `check`/`plan` to see a matching `contract_fingerprint` and
-no `pending_irreversible_policy`; if `loop.json` is missing they may initialize
-recorded thin defaults without creating paths. Preview, stamp, legacy
+execution requires active `next` to see a matching `contract_fingerprint` and
+no `pending_irreversible_policy`; if `loop.json` is missing it may initialize
+recorded thin defaults without creating product/evidence paths. Preview, stamp, legacy
 `sealed`/`confirmed_at`, headcount, and `hard_ceiling` fields are not ordinary
 dispatch authority.

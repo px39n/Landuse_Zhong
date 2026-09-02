@@ -56,7 +56,7 @@ Selected profile: A_local_thin | B_external_heavy | C_product_repo | D_custom
 ## 3. Trees
 
 ### 授权流
-tasks/feature registry → matching fingerprint → check/plan → Apply
+tasks/feature registry → matching fingerprint → check + next shadow → active receipt → Apply
 
 Optional irreversible-policy branch:
 policy delta → seal-preview（本页）→ 用户确认该 policy delta → loop.json

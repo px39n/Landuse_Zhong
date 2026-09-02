@@ -5,6 +5,9 @@ single change-local `handoff.json.dispatches[]` surface.
 
 ```text
 Agent: agents/<agent-id>
+Receipt ID:
+Receipt token:
+Harness contract hash:
 Package ID:
 Role ID:
 Local entry:
@@ -16,6 +19,7 @@ Scope:
 Forbidden scope:
 Allowed actions:
 Write scope:
+Test level: smoke | pilot | production | canary | unspecified
 Expected result:
 Expected evidence:
 Execution: sync | async
@@ -28,6 +32,9 @@ Stop when:
 - `Agent` is a logical protocol address, not a repository path, slash command,
   persistent lifecycle, or copied provider projection.
 - `Package ID` names one bounded work package.
+- `Receipt ID` and token come from active `next`; validate them with
+  `receipt-check` and never replace that check with a worker-side census. A
+  shadow receipt has no Apply authority.
 - `Role ID` is one canonical worker role from `canonical-roles.json` or local
   supervisor-direct `zpy`. Explicit `rose` is legacy/bootstrap input only.
   `general` is not a valid formal owner.
@@ -37,6 +44,8 @@ Stop when:
   use `Apply attempt: N/A`.
 - `Scope`, `Forbidden scope`, `Allowed actions`, and `Write scope` narrow
   runtime authority; they never create new authority.
+- `Harness contract hash` binds machine schemas and authority rules, not prose
+  skill formatting. `Test level` selects mechanical/semantic Verify scale.
 - `Execution` is `async` only for independent inputs, non-overlapping writes,
   and a stable supervisor-owned `Join` id.
 - Every non-supervisor worker remains non-delegating.
