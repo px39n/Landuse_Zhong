@@ -1,0 +1,75 @@
+{
+  "schema_version": "openspec-loop.v3",
+  "change_id": "ee-california",
+  "contract_fingerprint": "dd07440484cfaaead78a055945f80ae762c88d4f2045da9db2c8ed9e4567565d",
+  "narrative_digest": "ebf8e0b2a4a0b50753aa72440146ff53d7174d0a1fcf028fc633e9c096c6a7d3",
+  "narrative_policy": "advisory",
+  "autonomy": "supervised",
+  "retention": "thin",
+  "paths": {
+    "ledger": "test_cache/ee-california/loop-ledger.json",
+    "scratch": "test_cache/ee-california",
+    "product": null,
+    "bundle": null,
+    "gui_colab": null
+  },
+  "budgets": {
+    "task": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "revision": {
+      "max_explore_runs": 1,
+      "max_subagents": 4,
+      "max_active_minutes": 120
+    },
+    "change": {
+      "max_revisions": 3,
+      "max_active_minutes": 360
+    }
+  },
+  "per_ref_budgets": {
+    "R5": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "R6": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "R7": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "R8": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "R9": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "R10": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "R11": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    },
+    "R12": {
+      "max_apply_attempts": 3,
+      "max_unblock_runs": 1
+    }
+  },
+  "hard_ceiling": {
+    "max_active_minutes": 1080,
+    "max_self_extensions": 3
+  },
+  "test_profiles": {
+    "attempt": "targeted owner tests; no retained bundle",
+    "promotion": "complete task TEST exactly once before PASS",
+    "final": "whole-change verification plus strict OpenSpec validation",
+    "audit": "legacy monitor only when retention=full or explicitly required"
+  }
+}

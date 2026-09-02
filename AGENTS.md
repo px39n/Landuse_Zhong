@@ -88,19 +88,15 @@ policy analysis, and Earth Engine/GCS execution.
   `tools/`.
 - For cleanup or refactoring, lock existing behavior with focused tests first.
 
-## OpenSpec Loop v3
+## OpenSpec Loop v3.2
 
 - `.agents/skills/` is the semantic source for the Loop skill series; use
   `python scripts/sync_openspec_loop_skills.py` to refresh `.codex` and
   `.claude` mirrors without replacing platform metadata.
-- Before every active Loop call (`check`, `plan`, `seal`, `reseal`, `gate`,
-  `record`, `promote`, `sync`, `apply-revision`, `goals`, `design-verify`,
-  `summary`, or Apply/Verify/Unblock skill invocation), the sole supervisor
-  must align the current task `ACCEPT` text, applicable main/delta requirements,
-  `loop.json`, the canonical `.agents` skill, and the action class. Same-turn
-  reuse is allowed only while fingerprint, narrative digest, and canonical
-  skill state remain unchanged. A mismatch routes to interviewer, narrative
-  reseal, skill sync, or unblock; this latch creates no command or receipt.
+- `next --intent` is the compiled control entry and performs one census. Apply
+  uses its issued receipt and MUST NOT rerun check/plan; `check` is CI and
+  `plan` is verbose compatibility/debug. Runtime aligns fingerprint, narrative
+  digest, `loop.json`, harness hash, receipt, and action class before work.
 - `ACCEPT` is the admitted ruler for one whole-registry execution chapter.
   Apply/Verify/Unblock, checkbox/`STATE:`, promotion, and narrative reseal do
   not consume a cycle stamp. `apply-revision`, an obligation-changing reseal
@@ -122,6 +118,20 @@ policy analysis, and Earth Engine/GCS execution.
   correction inside unchanged WRITE_SCOPE. Framework policy, other refs, DAG,
   passed ACCEPT, widened acceptance, budget raises, external/product/Git
   authority, and a second-Unblock self-restamp return to the interviewer.
+- `repair_r1` is available only to an explicitly opted-in ref with Apply budget
+  exactly 3. Its method-only candidate preserves obligation hash, WRITE_SCOPE,
+  paths, budgets, other refs and fail-closed semantics; lineage receives one
+  final Apply and no third Unblock or second R1.
+- New Apply records require an authoritative unconsumed receipt and fail with
+  `apply_record_requires_receipt` before lookup or ledger write. Existing
+  legacy ledger rows remain readable but the CLI cannot create another.
+- `promote` uses a targeted fingerprint/task/dependency/verifier transition,
+  never `build_plan_payload`; success returns `next_required=true` and the
+  caller runs a fresh `next`.
+- Live ablation records only CLI-visible control/work facts. LLM control counts
+  come from an explicit labeled `ablation-evaluate --manifest` suite; live
+  summary reports zero with `llm_control_visibility=false` rather than claiming
+  model observability.
 - Loop start-work authority is a matching `loop.json.contract_fingerprint` with
   no pending irreversible policy decision. `seal-preview.md`, `sealed`, and
   `confirmed_at` are optional audit/compatibility data, not ordinary Apply
@@ -129,17 +139,17 @@ policy analysis, and Earth Engine/GCS execution.
   drift uses the semantic authority above. Promotion is fingerprint-neutral.
   Do not copy another change's external path tree as a default.
 - Raising an optional hard ceiling, changing retention/paths/scope, destructive
-  external writes, credentials, product `--commit`, and Git push/PR/`master`
-  remain human-authorized and subject to the repository gates above regardless
-  of autonomy. Ordinary thin/default policy needs no extra stamp ceremony.
+  external writes, credentials, product `--commit`, and Git push/PR/default
+  branch writes remain human-authorized regardless of autonomy. Ordinary
+  thin/default policy needs no extra stamp ceremony.
 - Default to `thin` retention, finite budgets, compact feature state, and
-  attempt/promotion/final test tiers. Reuse confirmed GCS, D-drive, cache, and
-  product paths instead of asking for them again on every attempt.
+  attempt/promotion/final test tiers. Do not repeatedly ask for confirmed paths
+  or append attempt history to the active spec.
 - Full retained bundles are required only when explicitly requested,
   `retention=full`, or legacy audit mode is active.
 - A successful command with scientifically wrong data, metrics, provenance, or
   outputs is `DEVIATED`, not `PASS`; route it through bounded unblock research.
-- `monitor-openspec-codex` remains legacy/audit-only. The public lifecycle and
+- `monitor-openspec-codex` is legacy/audit-only. The public lifecycle and
   amendment rules are in `docs/openspec-loop-engineering.md`.
 - Loop autonomy never authorizes GEE exports, GCS writes, paid API work,
   credentials, product `--commit` runs, `git push`, PR operations, or writes to

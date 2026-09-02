@@ -35,3 +35,105 @@ Supplymentary/ML_sensitivity/
 # 也忽略其下的所有PDF和PNG文件
 Supplymentary/**/*.pdf
 Supplymentary/**/*.png
+
+# s0 U.S. abandonment validation: publish only compact acceptance artifacts.
+# Large NetCDF/chunk/intermediate products remain outside Git under
+# D:\xarray\s0_us_abandon\<run_id>\.
+outputs/s0_us_abandon/*
+!outputs/s0_us_abandon/README.md
+!outputs/s0_us_abandon/300m_min4/
+outputs/s0_us_abandon/300m_min4/*
+!outputs/s0_us_abandon/300m_min4/local_run_abandonment_detection_acceptance.json
+!outputs/s0_us_abandon/300m_min6/
+outputs/s0_us_abandon/300m_min6/*
+!outputs/s0_us_abandon/300m_min6/local_run_abandonment_detection_acceptance.json
+!outputs/s0_us_abandon/1km_mode_min4/
+outputs/s0_us_abandon/1km_mode_min4/*
+!outputs/s0_us_abandon/1km_mode_min4/local_run_abandonment_detection_acceptance.json
+!outputs/s0_us_abandon/1km_mode_min5/
+outputs/s0_us_abandon/1km_mode_min5/*
+!outputs/s0_us_abandon/1km_mode_min5/local_run_abandonment_detection_acceptance.json
+!outputs/s0_us_abandon/1km_mode_min6/
+outputs/s0_us_abandon/1km_mode_min6/*
+!outputs/s0_us_abandon/1km_mode_min6/local_run_abandonment_detection_acceptance.json
+!outputs/s0_us_abandon/manifests/
+outputs/s0_us_abandon/manifests/*
+!outputs/s0_us_abandon/manifests/*.json
+!outputs/s0_us_abandon/summaries/
+outputs/s0_us_abandon/summaries/*
+!outputs/s0_us_abandon/summaries/abandonment_key_numbers.csv
+!outputs/s0_us_abandon/summaries/abandonment_by_state.csv
+!outputs/s0_us_abandon/summaries/abandonment_by_year.csv
+!outputs/s0_us_abandon/summaries/abandonment_robustness.csv
+!outputs/s0_us_abandon/summaries/abandonment_mean_vs_mode_conus.csv
+!outputs/s0_us_abandon/summaries/abandonment_mean_vs_mode_by_state.csv
+!outputs/s0_us_abandon/summaries/abandonment_resolution_comparison.csv
+!outputs/s0_us_abandon/summaries/abandonment_by_source.csv
+!outputs/s0_us_abandon/summaries/abandonment_by_state_source.csv
+!outputs/s0_us_abandon/summaries/abandonment_area_reconciliation.csv
+!outputs/s0_us_abandon/summaries/prediction_source_comparison.csv
+!outputs/s0_us_abandon/summaries/abandonment_legacy_event_class_audit.csv
+!outputs/s0_us_abandon/summaries/abandonment_legacy_event_class_audit.manifest.json
+!outputs/s0_us_abandon/reports/
+outputs/s0_us_abandon/reports/*
+!outputs/s0_us_abandon/reports/validation_report.md
+!outputs/s0_us_abandon/reports/comparability_limits.md
+
+# S1 wide-GMM validation: publish compact summaries/manifests/reports only.
+# Models, candidate CV tables, prediction scores and figure bundles remain on D:.
+outputs/s1_us_training/*
+!outputs/s1_us_training/manifests/
+outputs/s1_us_training/manifests/*
+!outputs/s1_us_training/manifests/*.json
+!outputs/s1_us_training/summaries/
+outputs/s1_us_training/summaries/*
+!outputs/s1_us_training/summaries/wide_gmm_component_selection.csv
+!outputs/s1_us_training/summaries/hybrid_negative_sampler_summary.csv
+!outputs/s1_us_training/summaries/hybrid_training_status.csv
+!outputs/s1_us_training/summaries/synthetic_diagnostic_metrics.csv
+!outputs/s1_us_training/summaries/baseline_learning_curve.csv
+!outputs/s1_us_training/reports/
+outputs/s1_us_training/reports/*
+!outputs/s1_us_training/reports/wide_gmm_validation_report.md
+!outputs/s1_us_training/reports/hybrid_training_status.md
+!outputs/s1_us_training/ai_review/
+outputs/s1_us_training/ai_review/*
+!outputs/s1_us_training/ai_review/*.csv
+!outputs/s1_us_training/ai_review/*.json
+
+# Publish only compact multiscale/prediction manifests and indexes from data/.
+!data/
+data/*
+!data/aligned_for_contrasting0819_index.csv
+!data/aligned_for_contrasting0819_manifest.json
+!data/us_abandon_clean_*.manifest.json
+!data/us_abandon_clean_mode0819.manifest.json
+!data/us_abandon_for_prediction0819.manifest.json
+!data/contracts/
+data/contracts/*
+!data/contracts/s2_reference_sources.json
+!data/contracts/cdl_active_crop_codes_v1.json
+!data/contracts/s2_gee_commercial_deployment_v1.json
+!data/contracts/s2_paid_eecu_baseline_v2.json
+!data/contracts/s2_paid_annual_probability_probe_eecu_baseline_v2.json
+!data/negative_sampler/
+data/negative_sampler/*
+!data/negative_sampler/gmm_similarity.csv
+!data/negative_sampler/imagery_similarity.csv
+!data/negative_sampler/negative_sampler_manifest.json
+.gitnexus
+
+# Local agent/runtime scratch is disposable and can contain large or deeply
+# nested attempt products. Authoritative compact evidence is retained only
+# through the explicit data/ and outputs/ allowlists above.
+test_cache/
+.pytest_cache/
+.omx/
+**/.ipynb_checkpoints/
+*.tmp
+*.part
+
+# S2 dry-run computation graphs and intermediate arrays are reproducible
+# runtime state; keep only their compact manifests/summaries/figures.
+outputs/s2_abandon_detect/dryrun_runtime_canary/
+outputs/s2_abandon_detect/**/intermediate/

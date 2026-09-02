@@ -29,7 +29,7 @@ REF = re.compile(r"\[#(?P<ref>R[A-Za-z0-9_.-]+)\]")
 TASK_ID = re.compile(r"^(?P<id>\d+(?:\.\d+)+)\s+")
 HEADING = re.compile(r"^#{1,6}\s+(?P<title>.+?)\s*$")
 DIRECTIVE = re.compile(
-    r"^\s*-\s*(?P<key>DEPENDS_ON|INDEPENDENT|NO_DEP|STATE|SUPERSEDES)\s*:\s*(?P<value>.*?)\s*$",
+    r"^\s*-\s*(?P<key>DEPENDS_ON|INDEPENDENT|NO_DEP|STATE|SUPERSEDES|REPAIR_POLICY|TEST_LEVEL)\s*:\s*(?P<value>.*?)\s*$",
     re.IGNORECASE,
 )
 ACCEPT = re.compile(r"^\s*-\s*ACCEPT\s*:\s*(?P<value>.*)$", re.IGNORECASE)
@@ -65,6 +65,8 @@ class ParsedTask:
     no_dep_raw: str | None = None
     state_raw: str | None = None
     supersedes_raw: str | None = None
+    repair_policy_raw: str | None = None
+    test_level_raw: str | None = None
 
 
 def digest_text(lines: list[str]) -> str:
@@ -225,6 +227,10 @@ def parse_tasks(text: str) -> list[ParsedTask]:
                     task.state_raw = value.lower().replace("-", "_")
                 elif key == "SUPERSEDES":
                     task.supersedes_raw = value
+                elif key == "REPAIR_POLICY":
+                    task.repair_policy_raw = value.lower()
+                elif key == "TEST_LEVEL":
+                    task.test_level_raw = value.lower().replace("-", "_")
                 continue
             accept = ACCEPT.match(raw_line)
             if accept:
@@ -257,6 +263,14 @@ def parse_tasks(text: str) -> list[ParsedTask]:
             raise ValueError(f"task {ref} must contain ACCEPT and TEST")
         if task.state_raw and task.state_raw not in TASK_STATES:
             raise ValueError(f"task {ref} has unsupported STATE `{task.state_raw}`")
+        if task.repair_policy_raw not in {None, "bounded-r1"}:
+            raise ValueError(
+                f"task {ref} has unsupported REPAIR_POLICY `{task.repair_policy_raw}`"
+            )
+        if task.test_level_raw not in {None, "smoke", "pilot", "production", "canary"}:
+            raise ValueError(
+                f"task {ref} has unsupported TEST_LEVEL `{task.test_level_raw}`"
+            )
         tasks.append(task)
     return tasks
 
@@ -320,6 +334,10 @@ def build_features(tasks: list[ParsedTask], existing: dict[str, Any]) -> dict[st
             "accept_hash": digest_text(task.accept_lines),
             "test_hash": digest_text(task.test_lines),
         }
+        if task.repair_policy_raw:
+            features[task.ref]["repair_policy"] = task.repair_policy_raw
+        if task.test_level_raw:
+            features[task.ref]["test_level"] = task.test_level_raw
 
     superseded = {ref for feature in features.values() for ref in feature["supersedes"]}
     for ref in superseded:

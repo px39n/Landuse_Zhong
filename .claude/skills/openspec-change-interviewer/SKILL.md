@@ -11,8 +11,8 @@ state. This skill updates the one OpenSpec contract; it does not create another
 spec lifecycle, ledger, supervisor, or handoff surface.
 
 Ordinary start-work readiness is a matching `contract_fingerprint` with no
-pending irreversible policy decision. If `loop.json` is missing, `check` or
-`plan` records thin defaults and the current fingerprint without creating any
+pending irreversible policy decision. If `loop.json` is missing, one `check`
+records thin defaults and the current fingerprint without creating any
 ledger, scratch, cache, product, or retained root. Legacy `sealed`,
 `confirmed_at`, `seal-preview.md`, and stamp fields are optional audit
 diagnostics, not start-work authority.
@@ -38,11 +38,19 @@ Start with a cheap inventory:
 - current `feature_list.json` schema and ref set
 - `loop.json` fingerprint, retention profile, paths, and budgets when present
 - for a semantic amendment, any ref-local allowance or optional runtime advisory
-  from plan/reseal
+  from the compact shadow action or reseal
 - strict OpenSpec validation status when available
 
 Read `tasks.md` first. Load only the proposal/design/spec sections needed to
 resolve the active gap. Use targeted search and heading slices.
+
+When invoked from Loop for `repair_class=R2` or any `supersede_task`, the first
+write is to create or refresh `interview.md` using the seven sections in
+`references/interview-packet-format.md`. Populate evidence, current decision
+context, accepted decisions, recorded fingerprint/retention/paths/budgets/
+autonomy, active ACCEPT, and Unblock expected/observed before asking a question.
+Preserve accepted answers and Section 7 history. `seal-preview.md` never
+substitutes for this packet.
 
 Classify into exactly one entry mode:
 
@@ -127,12 +135,12 @@ Natural flow after grill write-back:
 
 1. `openspec validate <change-id> --strict`
 2. `python scripts/generate_openspec_feature_list.py --change-id <change-id>`
-3. `python scripts/openspec_loop.py check <change-id>` and
-   `python scripts/openspec_loop.py plan <change-id>`. Missing-loop thin
-   initialization is valid and creates no configured directories.
-4. Confirm `check.ok=true`, a matching fingerprint, and no
-   `pending_irreversible_policy`. Ordinary Apply may begin at this latch without
-   a preview, stamp, or user ceremony.
+3. When `loop.json` is missing, run `check` once for thin initialization; do not
+   call verbose `plan`.
+4. When `loop.json` exists, run only `next --shadow` for compact readiness
+   inspection. Confirm a matching fingerprint, no issues, and no
+   `pending_irreversible_policy`. Ordinary active next may issue Apply receipts
+   at this latch without a preview, stamp, or user ceremony.
 5. If the user requests audit diagnostics, or the change raises
    `hard_ceiling`, changes retention, paths, or scope, prepare the optional
    change-scoped `seal-preview.md` per `references/seal-preview-format.md`.
@@ -140,8 +148,10 @@ Natural flow after grill write-back:
    persist it with the narrow applicable options.
 
 ```powershell
+# Missing-loop initialization only:
 python scripts/openspec_loop.py check <change-id>
-python scripts/openspec_loop.py plan <change-id>
+# Ordinary readiness inspection:
+python scripts/openspec_loop.py next <change-id> --intent drain --run-id <id> --shadow
 # Optional irreversible-policy/audit persistence only:
 python scripts/openspec_loop.py seal <change-id> --confirmed [explicit policy options]
 ```
@@ -196,7 +206,17 @@ When Loop reports semantic fingerprint drift, `DEVIATED`, `amend_spec`, or
 2. compare observed vs ACCEPT / last good baseline
 3. ask only the decision that changes scope, output authority, tasks, or budget
 4. update the contract and feature index
-5. rebuild the fingerprint and re-run `check`/`plan`
+5. reseal the fingerprint through the authorized path, then run one
+   `next --shadow`
+
+The Loop Repair Gate classifies a pre-authorized same-obligation method repair
+as R1 and handles it without this skill. Missing/ambiguous classification,
+GOAL or ACCEPT-boundary change, DAG/ref/path/retention/budget/external authority
+change, and every task succession are R2. For R2, ask only the material gap;
+reuse recorded local or B_external_heavy paths without re-asking. If no policy
+exists, prefill thin + A_local_thin, Apply 2, Unblock 2, cycle stamps 3, and
+supervised. The user may answer `同意默认`. Succession may be recommended but
+must not scaffold a new change without a separate user decision.
 
 Under `autonomy: full_auto` the sole supervisor may amend the active registry
 and run `reseal --allow-semantic-change --reason <reason>`. Under `supervised`,

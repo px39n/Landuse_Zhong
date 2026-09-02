@@ -1,0 +1,124 @@
+{
+  "schema_version": "openspec-feature-list.v2",
+  "change_id": "ee-california",
+  "registry": {
+    "active_source": "tasks.md active registry",
+    "active_ref_count": 8,
+    "history_source": "git"
+  },
+  "features": {
+    "R5": {
+      "id": "5.1",
+      "ref": "R5",
+      "title": "Implement the six-parameter cutoff-safe local detector in the existing module",
+      "state": "passed",
+      "passes": true,
+      "depends_on": [],
+      "supersedes": [],
+      "task_path": "tasks.md:20",
+      "accept_hash": "785d199de2fd04e12c1cca68ebd6b3a49b629fc9b45cd1b7c45796ecc17ed38f",
+      "test_hash": "37925b887f6e1cff87b4075db5c3d5ce1fb8c56be247cd3140b99638caeaf9f9"
+    },
+    "R6": {
+      "id": "6.1",
+      "ref": "R6",
+      "title": "Route the runner, generator, and final active Process cell through the public API",
+      "state": "passed",
+      "passes": true,
+      "depends_on": [
+        "R5"
+      ],
+      "supersedes": [],
+      "task_path": "tasks.md:29",
+      "accept_hash": "a2572e8490b8864fb83f1434962790719df7efb24191b2f7a60726460cf36032",
+      "test_hash": "b40d288ecc243c4ccd5168a61098f5e7e2b1871ca4e7076d32ff146696ff99a6"
+    },
+    "R7": {
+      "id": "7.1",
+      "ref": "R7",
+      "title": "Freeze cutoff-safe P1 evidence, 36 core keys, eight legacy keys, and the decision family",
+      "state": "pending",
+      "passes": false,
+      "depends_on": [
+        "R6"
+      ],
+      "supersedes": [],
+      "task_path": "tasks.md:40",
+      "accept_hash": "715acbfdbf0aceabe011d9296c31681d75ed8cfdf015a319f31969a0ab305207",
+      "test_hash": "5dc574b0429ad554e044fd4ace8a57186e90079cb84549ae26dae1a164c45ff4"
+    },
+    "R8": {
+      "id": "8.1",
+      "ref": "R8",
+      "title": "Complete and freeze the independent P2 holdout before any prediction reveal",
+      "state": "pending",
+      "passes": false,
+      "depends_on": [
+        "R7"
+      ],
+      "supersedes": [],
+      "task_path": "tasks.md:53",
+      "accept_hash": "7272cce9f4dc465b4ec44862a294d122cde521d7c9faf243654e55d5628de00e",
+      "test_hash": "5795026e23b5bbe8f82acbf71b7ab87140ed9954c19b347026c8fbe01bc281f5"
+    },
+    "R9": {
+      "id": "9.1",
+      "ref": "R9",
+      "title": "Materialize and verify all five detector/merged inventories and complete-CONUS CSVs",
+      "state": "pending",
+      "passes": false,
+      "depends_on": [
+        "R6",
+        "R8"
+      ],
+      "supersedes": [],
+      "task_path": "tasks.md:68",
+      "accept_hash": "4c253f51a869af66015e0be96297522197305a6dae59060866a5000b03fb227e",
+      "test_hash": "015cdde93ce7d019f4581480a689c175e61f8b02ea80c84964ea00be1425c3e9"
+    },
+    "R10": {
+      "id": "10.1",
+      "ref": "R10",
+      "title": "Run the RF canary and conditionally execute full California training under the USD 100 cap",
+      "state": "pending",
+      "passes": false,
+      "depends_on": [
+        "R8",
+        "R9"
+      ],
+      "supersedes": [],
+      "task_path": "tasks.md:84",
+      "accept_hash": "341395352652278ec8fccce3d39ffdd7d451c88be4c3f17097828a0995426d6f",
+      "test_hash": "f3b3b2037b171f7d06c9738df627ffea0ca088d4835e57d7ff3aaa4d4933fbef"
+    },
+    "R11": {
+      "id": "11.1",
+      "ref": "R11",
+      "title": "Evaluate available frozen variants on P2 and build the post-freeze scene gallery",
+      "state": "pending",
+      "passes": false,
+      "depends_on": [
+        "R9",
+        "R10"
+      ],
+      "supersedes": [],
+      "task_path": "tasks.md:101",
+      "accept_hash": "987a7d1bf548f187271b10a373ea855bc5061b3d551121a68cfc463bbc192a94",
+      "test_hash": "3a9d38e64ea6245646b1c40091f28c53cdbaba4b663fc184dc91b77d257b07c6"
+    },
+    "R12": {
+      "id": "12.1",
+      "ref": "R12",
+      "title": "Verify the whole change and publish exact terminal evidence",
+      "state": "pending",
+      "passes": false,
+      "depends_on": [
+        "R11"
+      ],
+      "supersedes": [],
+      "task_path": "tasks.md:114",
+      "accept_hash": "3380e38b7a0f233f44b37220fc966c6e58bb80615942d9b8fdf10b27ca40111f",
+      "test_hash": "6aad9bb65c5e78d518f2e93aa5d1842bec9dc8e7c8df81a70b084b66b7ae0479"
+    }
+  }
+}

@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,14 +30,40 @@ SCHEMA_PLAN = "openspec-loop-plan.v2"
 SCHEMA_CHECK = "openspec-loop-check.v2"
 SCHEMA_LEDGER = "openspec-loop-ledger.v2"
 SCHEMA_GATE = "openspec-loop-gate.v2"
-SCHEMA_SUMMARY = "openspec-loop-summary.v3"
-SCHEMA_PROMOTE = "openspec-loop-promote.v1"
+SCHEMA_SUMMARY = "openspec-loop-summary.v4"
+SCHEMA_PROMOTE = "openspec-loop-promote.v2"
 SCHEMA_SYNC = "openspec-loop-sync.v1"
 SCHEMA_GOALS = "openspec-loop-goals.v1"
 SCHEMA_DESIGN_VERIFY = "openspec-loop-design-verify.v1"
 SCHEMA_REVISION_PROPOSAL = "openspec-loop-revision-proposal.v1"
 SCHEMA_APPLY_REVISION = "openspec-loop-apply-revision.v1"
+SCHEMA_NEXT = "openspec-loop-next.v1"
+SCHEMA_RECEIPT = "openspec-loop-receipt.v1"
+SCHEMA_RECEIPT_CHECK = "openspec-loop-receipt-check.v1"
+SCHEMA_MECHANICAL_VERIFY = "openspec-loop-mechanical-verify.v1"
+SCHEMA_ABLATION_SUITE = "openspec-loop-ablation-suite.v1"
+SCHEMA_ABLATION_REPORT = "openspec-loop-ablation-report.v1"
+HARNESS_CONTRACT_VERSION = "openspec-loop-control.v3.2"
+NEXT_INTENTS = ("drain", "review", "explore", "repair")
+TEST_LEVELS = ("smoke", "pilot", "production", "canary")
+SEMANTIC_VERIFY_LEVELS = {"pilot", "production", "canary"}
 OBSERVATION_STATES = ("match", "mismatch")
+ABLATION_VERDICTS = ("PASS", "FAIL", "BLOCKED", "DEVIATED")
+ABLATION_EVENT_KINDS = (
+    "next",
+    "receipt_check",
+    "apply",
+    "record",
+    "verify_mechanical",
+    "verify_semantic",
+    "promote",
+    "unblock",
+    "interview",
+    "review",
+    "explore",
+    "design_verify",
+    "stop",
+)
 TERMINAL_APPLY_RESULTS = {
     "blocked",
     "completed",
@@ -58,7 +85,14 @@ CANONICAL_APPLY_STATUSES = {
     "blocked",
     "unverified",
 }
-ZERO_APPLY_KINDS = {"explore", "verify", "goal", "stop_hook", "review"}
+ZERO_APPLY_KINDS = {
+    "explore",
+    "verify",
+    "verify_mechanical",
+    "goal",
+    "stop_hook",
+    "review",
+}
 GATE_KINDS = ("apply", "verify", "explore", "unblock", "goal", "stop_hook", "review")
 NEW_WORK_KINDS = {"apply", "explore"}
 REF_REQUIRED_GATE_KINDS = {"apply", "verify", "explore", "unblock"}
@@ -66,8 +100,32 @@ STAMP_SOURCES = (
     "user_confirmed",
     "interviewer_confirmed",
     "unblock_self_confirm",
+    "repair_r1",
     "full_auto",
     "full_auto_apply_revision",
+)
+REPAIR_POLICY_BOUNDED_R1 = "bounded-r1"
+REPAIR_CLASSES = ("R0", "R1", "R2")
+REPAIR_R1_MARKER_RE = re.compile(
+    r"^\s*<!--\s*openspec:repair-r1-method\s+ref=(?P<ref>R[A-Za-z0-9_.-]+)\s+"
+    r"(?P<edge>start|end)\s*-->\s*$",
+    re.IGNORECASE,
+)
+REPAIR_R1_METHOD_HEADINGS = (
+    "method",
+    "pipeline",
+    "protocol",
+    "execution",
+    "tool",
+    "algorithm",
+    "runtime",
+    "方法",
+    "流程",
+    "协议",
+    "执行",
+    "工具",
+    "算法",
+    "运行",
 )
 
 TASK_STATES = {
@@ -123,7 +181,7 @@ GOAL_DIRECTIVE_RE = re.compile(
     re.IGNORECASE,
 )
 DIRECTIVE_RE = re.compile(
-    r"^\s*-\s*(?P<key>DEPENDS_ON|INDEPENDENT|NO_DEP|STATE|SUPERSEDES|FILES|WRITE_SCOPE|ROLE_ID|EXECUTION|JOIN|WORKTREE)\s*:\s*(?P<value>.+?)\s*$",
+    r"^\s*-\s*(?P<key>DEPENDS_ON|INDEPENDENT|NO_DEP|STATE|SUPERSEDES|FILES|WRITE_SCOPE|ROLE_ID|EXECUTION|JOIN|WORKTREE|REPAIR_POLICY|TEST_LEVEL)\s*:\s*(?P<value>.+?)\s*$",
     re.IGNORECASE,
 )
 LEGACY_STATE_RE = re.compile(
@@ -200,6 +258,44 @@ def emit_json(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def canonical_json_bytes(payload: dict[str, Any]) -> bytes:
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def harness_contract_hash() -> str:
+    """Hash the machine control contract, not the prose skill."""
+
+    payload = {
+        "version": HARNESS_CONTRACT_VERSION,
+        "receipt_schema": SCHEMA_RECEIPT,
+        "next_intents": NEXT_INTENTS,
+        "test_levels": TEST_LEVELS,
+        "default_budgets": DEFAULT_BUDGETS,
+        "stamp_sources": STAMP_SOURCES,
+        "gate_kinds": GATE_KINDS,
+        "repair_policy": REPAIR_POLICY_BOUNDED_R1,
+        "repair_classes": REPAIR_CLASSES,
+        "canonical_apply_statuses": sorted(CANONICAL_APPLY_STATUSES),
+        "role_write_policies": globals().get("ROLE_WRITE_POLICIES", {}),
+        "deployable_roles": sorted(globals().get("DEPLOYABLE_ROLE_IDS", set())),
+        "read_only_roles": sorted(globals().get("READ_ONLY_ROLE_IDS", set())),
+    }
+    return hashlib.sha256(
+        b"openspec-loop.harness-contract.v1\0" + canonical_json_bytes(payload)
+    ).hexdigest()
+
+
+def receipt_id_for_payload(payload: dict[str, Any]) -> str:
+    body = canonical_json_bytes(payload)
+    digest = hashlib.sha256(b"openspec-loop.receipt.v1\0" + body).hexdigest()
+    return digest[:20]
+
+
 @dataclass(slots=True)
 class TaskEntry:
     order: int
@@ -219,6 +315,8 @@ class TaskEntry:
     execution_raw: str | None = None
     join_raw: str | None = None
     worktree_raw: str | None = None
+    repair_policy_raw: str | None = None
+    test_level_raw: str | None = None
     dependencies: list[str] = field(default_factory=list)
     dependency_closure: list[str] = field(default_factory=list)
     supersedes: list[str] = field(default_factory=list)
@@ -239,6 +337,7 @@ class TaskEntry:
     unblock_runs_used: int = 0
     unblock_active: bool = False
     budget_disposition: str | None = None
+    repair_apply_exhausted: bool = False
     target_files: list[str] = field(default_factory=list)
     write_scope: list[str] = field(default_factory=list)
     routing: dict[str, Any] | None = None
@@ -276,6 +375,7 @@ class TaskEntry:
             "unblock_runs_used": self.unblock_runs_used,
             "unblock_active": self.unblock_active,
             "budget_disposition": self.budget_disposition,
+            "repair_apply_exhausted": self.repair_apply_exhausted,
             "target_files": self.target_files,
             "write_scope": self.write_scope,
             "routing": self.routing,
@@ -286,6 +386,8 @@ class TaskEntry:
             "allowed_write_roots": self.allowed_write_roots,
             "wave_eligible": self.wave_eligible,
             "wave_blockers": self.wave_blockers,
+            "repair_policy": self.repair_policy_raw,
+            "test_level": self.test_level_raw,
         }
 
 
@@ -376,7 +478,16 @@ def parse_task_file(tasks_text: str) -> list[TaskEntry]:
             current_task.join_raw = value
         elif key == "WORKTREE":
             current_task.worktree_raw = value
+        elif key == "REPAIR_POLICY":
+            current_task.repair_policy_raw = value.lower()
+        elif key == "TEST_LEVEL":
+            current_task.test_level_raw = value.lower().replace("-", "_")
 
+    for task in tasks:
+        if task.test_level_raw not in {None, *TEST_LEVELS}:
+            task.issues.append(
+                f"unsupported TEST_LEVEL `{task.test_level_raw}`"
+            )
     return tasks
 
 
@@ -673,6 +784,18 @@ def build_dependency_graph(tasks: list[TaskEntry], features: dict[str, Any]) -> 
             task.issues.append("task_id drift")
         if task.state_raw and task.state_raw not in TASK_STATES:
             task.issues.append(f"unsupported STATE `{task.state_raw}`")
+        if task.repair_policy_raw not in {None, "bounded-r1"}:
+            task.issues.append(
+                f"unsupported REPAIR_POLICY `{task.repair_policy_raw}`"
+            )
+        feature_repair_policy = feature.get("repair_policy")
+        if feature_repair_policy != task.repair_policy_raw:
+            if feature_repair_policy is not None or task.repair_policy_raw is not None:
+                task.issues.append("task/feature repair_policy drift")
+        feature_test_level = feature.get("test_level")
+        if feature_test_level != task.test_level_raw:
+            if feature_test_level is not None or task.test_level_raw is not None:
+                task.issues.append("task/feature test_level drift")
 
     for task in tasks:
         for token in parse_ref_tokens(task.supersedes_raw):
@@ -956,6 +1079,7 @@ def default_stamp_state(fingerprint: str) -> dict[str, Any]:
         "semantic_stamps_in_chapter": 0,
         "charged_cycle_stamps": 0,
         "self_confirmed_refs": {},
+        "repair_r1_history": [],
         "last_stamp": None,
     }
 
@@ -981,6 +1105,17 @@ def stamp_state_of(config: dict[str, Any] | None, fingerprint: str) -> dict[str,
             for source, refs in recorded.items()
             if isinstance(source, str) and isinstance(refs, list)
         }
+    repair_history = raw.get("repair_r1_history")
+    if isinstance(repair_history, list):
+        state["repair_r1_history"] = [
+            json.loads(json.dumps(item, ensure_ascii=False))
+            for item in repair_history
+            if isinstance(item, dict)
+            and isinstance(item.get("ref"), str)
+            and isinstance(item.get("source_fingerprint"), str)
+            and isinstance(item.get("target_fingerprint"), str)
+            and isinstance(item.get("obligation_hash"), str)
+        ]
     last_stamp = raw.get("last_stamp")
     if last_stamp is None or isinstance(last_stamp, dict):
         state["last_stamp"] = last_stamp
@@ -1026,7 +1161,7 @@ def classify_semantic_stamp(
 ) -> tuple[bool, bool]:
     """Return (charged, opens_new_chapter) for one semantic stamp."""
 
-    if stamp_source == "full_auto_apply_revision":
+    if stamp_source in {"full_auto_apply_revision", "repair_r1"}:
         return True, False
     if stamp_source == "unblock_self_confirm":
         return True, False
@@ -1049,10 +1184,14 @@ def updated_stamp_state(
     reason: str,
     charged: bool,
     opens_new_chapter: bool,
+    repair_record: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if opens_new_chapter:
         state = default_stamp_state(target_fingerprint)
         state["semantic_stamps_in_chapter"] = 1
+        state["repair_r1_history"] = json.loads(
+            json.dumps(prior.get("repair_r1_history", []), ensure_ascii=False)
+        )
     else:
         state = json.loads(json.dumps(prior, ensure_ascii=False))
         state["semantic_stamps_in_chapter"] = (
@@ -1068,6 +1207,9 @@ def updated_stamp_state(
         if ref not in refs:
             refs.append(ref)
             refs.sort()
+    if stamp_source == "repair_r1" and repair_record is not None:
+        history = state.setdefault("repair_r1_history", [])
+        history.append(json.loads(json.dumps(repair_record, ensure_ascii=False)))
     state["last_stamp"] = {
         "stamp_source": stamp_source,
         "source_fingerprint": source_fingerprint,
@@ -1078,6 +1220,71 @@ def updated_stamp_state(
         "recorded_at_utc": utc_now(),
     }
     return state
+
+
+def repair_r1_history_of(config: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(config, dict):
+        return []
+    raw = config.get("stamp_state")
+    if not isinstance(raw, dict) or not isinstance(raw.get("repair_r1_history"), list):
+        return []
+    return [item for item in raw["repair_r1_history"] if isinstance(item, dict)]
+
+
+def repair_r1_target_record(
+    config: dict[str, Any] | None,
+    fingerprint: str,
+    ref: str,
+) -> dict[str, Any] | None:
+    for item in reversed(repair_r1_history_of(config)):
+        if item.get("target_fingerprint") == fingerprint and item.get("ref") == ref:
+            return item
+    return None
+
+
+def repair_r1_lineage_fingerprints(
+    config: dict[str, Any] | None,
+    fingerprint: str,
+    ref: str,
+) -> list[str]:
+    history = repair_r1_history_of(config)
+    lineage = [fingerprint]
+    seen = {fingerprint}
+    cursor = fingerprint
+    while True:
+        record = next(
+            (
+                item
+                for item in reversed(history)
+                if item.get("target_fingerprint") == cursor and item.get("ref") == ref
+            ),
+            None,
+        )
+        if record is None:
+            break
+        source = str(record.get("source_fingerprint") or "")
+        if not source or source in seen:
+            break
+        lineage.append(source)
+        seen.add(source)
+        cursor = source
+    return lineage
+
+
+def attempts_for_ref_lineage(
+    ledger: dict[str, Any],
+    config: dict[str, Any] | None,
+    fingerprint: str,
+    ref: str,
+) -> list[dict[str, Any]]:
+    fingerprints = set(repair_r1_lineage_fingerprints(config, fingerprint, ref))
+    return [
+        attempt
+        for episode in ledger.get("episodes", [])
+        if episode.get("contract_fingerprint") in fingerprints
+        for attempt in attempts_for_episode(episode)
+        if attempt.get("ref") == ref
+    ]
 
 
 def hard_ceiling_of(config: dict[str, Any] | None) -> dict[str, int] | None:
@@ -1256,6 +1463,24 @@ def loop_config_issues(config: dict[str, Any] | None, change_id: str) -> list[st
                         or value < 0
                     ):
                         issues.append(f"loop.json stamp_state.{key} must be non-negative")
+                repair_history = stamp_state.get("repair_r1_history", [])
+                if not isinstance(repair_history, list):
+                    issues.append("loop.json stamp_state.repair_r1_history must be an array")
+                else:
+                    for index, item in enumerate(repair_history):
+                        if not isinstance(item, dict) or any(
+                            not isinstance(item.get(key), str) or not item.get(key)
+                            for key in (
+                                "ref",
+                                "source_fingerprint",
+                                "target_fingerprint",
+                                "obligation_hash",
+                            )
+                        ):
+                            issues.append(
+                                "loop.json stamp_state.repair_r1_history"
+                                f"[{index}] is invalid"
+                            )
     if config.get("change_id") != change_id:
         issues.append("loop.json change_id mismatch")
     if config.get("retention") not in {"none", "thin", "full"}:
@@ -1651,7 +1876,7 @@ def pending_irreversible_policy(config: dict[str, Any] | None) -> list[str]:
 def has_blocking_evidence(attempts: list[dict[str, Any]], ref: str) -> bool:
     return any(
         attempt.get("ref") == ref
-        and attempt.get("kind") in {"apply", "verify"}
+        and attempt.get("kind") in {"apply", "verify", "verify_mechanical"}
         and attempt.get("result") in {"blocked", "deviated"}
         for attempt in attempts
     )
@@ -1926,6 +2151,7 @@ def apply_budget_snapshot(
         if (task := tasks_by_ref.get(ref)) is not None
         and task.max_apply_attempts is not None
         and task.apply_attempts_used < task.max_apply_attempts
+        and not task.repair_apply_exhausted
     )
     return {"apply_remaining": apply_remaining}
 
@@ -1938,22 +2164,25 @@ def apply_runtime_budget_state(
     tasks: list[TaskEntry],
 ) -> None:
     budgets = merge_budget_defaults(config.get("budgets"))
-    attempts: list[dict[str, Any]] = []
+    ledger: dict[str, Any] = {
+        "schema_version": SCHEMA_LEDGER,
+        "change_id": change_id,
+        "episodes": [],
+    }
     ledger_path = configured_ledger_path(repo_root, config, None)
     if ledger_path.is_file():
         ledger = load_or_init_ledger(ledger_path, change_id)
-        episode = next(
-            (
-                item
-                for item in ledger.get("episodes", [])
-                if item.get("contract_fingerprint") == fingerprint
-            ),
-            None,
-        )
-        if episode is not None:
-            attempts = attempts_for_episode(episode)
 
     for task in tasks:
+        attempts = attempts_for_ref_lineage(
+            ledger, config, fingerprint, task.ref
+        )
+        current_episode = episode_for_fingerprint(ledger, fingerprint)
+        current_attempts = [
+            item
+            for item in attempts_for_episode(current_episode or {})
+            if item.get("ref") == task.ref
+        ]
         task_budget = ref_budget_of(config, budgets, task.ref)
         task.max_apply_attempts = task_budget["max_apply_attempts"]
         task.max_unblock_runs = task_budget["max_unblock_runs"]
@@ -1968,9 +2197,66 @@ def apply_runtime_budget_state(
             if attempt.get("ref") == task.ref and attempt.get("kind") == "unblock"
         )
         task.unblock_active = has_blocking_evidence(attempts, task.ref)
-        if (
-            not task.completed
-            and task.unblock_runs_used >= task_budget["max_unblock_runs"]
+        latest_unblock = next(
+            (item for item in reversed(attempts) if item.get("kind") == "unblock"),
+            None,
+        )
+        repair_record = repair_r1_target_record(config, fingerprint, task.ref)
+        latest_current_apply = next(
+            (
+                item
+                for item in reversed(current_attempts)
+                if item.get("kind") == "apply"
+            ),
+            None,
+        )
+        latest_current_blocking = next(
+            (
+                item
+                for item in reversed(current_attempts)
+                if item.get("kind") in {"apply", "verify"}
+                and item.get("result")
+                in {"blocked", "deviated", "failed", "failure", "fail", "no_progress"}
+            ),
+            None,
+        )
+        explicit_stop = bool(
+            latest_unblock and latest_unblock.get("disposition") == "stop_budget"
+        )
+        awaiting_repair = bool(
+            latest_unblock
+            and latest_unblock.get("disposition") == "amend_spec"
+            and latest_unblock.get("repair_class") == "R1"
+            and repair_record is None
+        )
+        ordinary_exhausted = (
+            task.unblock_runs_used >= task_budget["max_unblock_runs"]
+            and task.apply_attempts_used >= task_budget["max_apply_attempts"]
+        )
+        failed_post_repair = bool(
+            repair_record
+            and latest_current_apply
+            and latest_current_blocking
+            and current_attempts.index(latest_current_blocking)
+            >= current_attempts.index(latest_current_apply)
+        )
+        if repair_record is not None:
+            post_repair_apply_limit = int(
+                repair_record.get("post_repair_apply_limit") or 1
+            )
+            post_repair_apply_count = sum(
+                1 for item in current_attempts if item.get("kind") == "apply"
+            )
+            task.repair_apply_exhausted = (
+                post_repair_apply_count >= post_repair_apply_limit
+            )
+        if not task.completed and awaiting_repair:
+            task.effective_state = "blocked"
+            task.ready = False
+            if "repair_r1_pending" not in task.blocked_reasons:
+                task.blocked_reasons.append("repair_r1_pending")
+        elif not task.completed and (
+            explicit_stop or failed_post_repair or (ordinary_exhausted and not repair_record)
         ):
             task.effective_state = "maxed"
             task.ready = False
@@ -2033,7 +2319,8 @@ def build_plan_payload(
             if not isinstance(raw_config, dict):
                 raise ValueError("loop.json must be a JSON object")
         config = sanitize_loop_config(raw_config) if raw_config is not None else None
-        maybe_persist_sanitized_loop_config(repo_root, change_id, raw_config, config)
+        if not advisory:
+            maybe_persist_sanitized_loop_config(repo_root, change_id, raw_config, config)
         if config is None and not advisory and tasks:
             config = initialize_thin_loop_config(
                 repo_root,
@@ -2136,6 +2423,7 @@ def build_plan_payload(
         if (task := tasks_by_ref.get(ref)) is not None
         and task.max_apply_attempts is not None
         and task.apply_attempts_used < task.max_apply_attempts
+        and not task.repair_apply_exhausted
     ][:allowed_parallel_applies]
     return {
         "schema_version": SCHEMA_PLAN,
@@ -2164,6 +2452,548 @@ def build_plan_payload(
         "warnings": warnings,
         "tasks": [task.to_plan_item() for task in tasks],
     }
+
+
+def episode_attempts_for_plan(
+    repo_root: Path,
+    change_id: str,
+    fingerprint: str,
+) -> list[dict[str, Any]]:
+    config = load_loop_config(repo_root, change_id)
+    if not isinstance(config, dict):
+        return []
+    ledger_path = configured_ledger_path(repo_root, config, None)
+    if not ledger_path.is_file():
+        return []
+    ledger = load_or_init_ledger(ledger_path, change_id)
+    episode = episode_for_fingerprint(ledger, fingerprint)
+    return attempts_for_episode(episode or {})
+
+
+def latest_ref_attempt(
+    attempts: list[dict[str, Any]],
+    ref: str,
+) -> dict[str, Any] | None:
+    return next(
+        (item for item in reversed(attempts) if item.get("ref") == ref),
+        None,
+    )
+
+
+def choose_next_action(
+    repo_root: Path,
+    change_id: str,
+    payload: dict[str, Any],
+    *,
+    intent: str,
+) -> tuple[str, str | None, list[str]]:
+    if intent != "drain":
+        selected = payload.get("selected_ref")
+        return intent, selected if isinstance(selected, str) else None, []
+    if payload.get("issues") or not payload.get("fingerprint_ready"):
+        return "interview", None, list(payload.get("issues", []))
+
+    fingerprint = str(payload.get("contract_fingerprint") or "")
+    attempts = episode_attempts_for_plan(repo_root, change_id, fingerprint)
+    for task in payload.get("tasks", []):
+        if task.get("checked") or task.get("effective_state") in TERMINAL_STATES:
+            continue
+        ref = str(task.get("ref") or "")
+        latest = latest_ref_attempt(attempts, ref)
+        if latest is None:
+            continue
+        kind = latest.get("kind")
+        result = str(latest.get("result") or "").lower()
+        if kind == "verify" and result == "pass":
+            return "promote", ref, []
+        if kind == "verify_mechanical" and result == "pass":
+            if latest.get("semantic_verify_required") is True:
+                return "verify_semantic", ref, []
+            return "promote", ref, []
+        if kind == "apply" and status_of_apply_record(latest) == "completed":
+            join_id = latest.get("join_id")
+            reasons = (
+                historical_join_reasons(attempts, ref, str(join_id))
+                if join_id
+                else []
+            )
+            if not reasons:
+                return "verify_mechanical", ref, []
+            if any(reason.startswith("wave_join_pending") for reason in reasons):
+                return "wait_join", ref, reasons
+            return "stop", ref, reasons
+        if kind in {"apply", "verify", "verify_mechanical"} and result in {
+            "blocked",
+            "deviated",
+            "failed",
+            "failure",
+            "fail",
+            "no_progress",
+            "partial",
+        }:
+            return "unblock", ref, []
+        if kind == "unblock":
+            disposition = latest.get("disposition")
+            if disposition in {"retry", "targeted_probe"}:
+                continue
+            if disposition == "amend_spec" and latest.get("repair_class") == "R1":
+                return "repair", ref, []
+            if disposition in {"amend_spec", "supersede_task"}:
+                return "interview", ref, []
+            if disposition == "stop_budget":
+                return "stop", ref, ["stop_budget"]
+
+    dispatch_refs = [str(item) for item in payload.get("dispatch_refs", [])]
+    if dispatch_refs:
+        return "apply", dispatch_refs[0], []
+    if payload.get("tasks") and len(payload.get("terminal_refs", [])) == len(
+        payload.get("tasks", [])
+    ):
+        return "design_verify", None, []
+    return "stop", None, []
+
+
+def build_apply_receipts(
+    payload: dict[str, Any],
+    *,
+    run_id: str,
+    shadow: bool,
+) -> list[dict[str, Any]]:
+    tasks = {str(item.get("ref")): item for item in payload.get("tasks", [])}
+    routes = {str(item.get("ref")): item for item in payload.get("routing", [])}
+    dispatch_refs = [str(item) for item in payload.get("dispatch_refs", [])]
+    receipts: list[dict[str, Any]] = []
+    for ref in payload.get("dispatch_refs", []):
+        ref = str(ref)
+        task = tasks[ref]
+        route = routes[ref]
+        join_id = route.get("join_id")
+        wave_refs = [
+            candidate
+            for candidate in dispatch_refs
+            if routes.get(candidate, {}).get("join_id") == join_id
+        ] or [ref]
+        attempt_number = int(task.get("apply_attempts_used") or 0) + 1
+        attempt_id = (
+            f"apply:{str(payload.get('contract_fingerprint'))[:12]}:{ref}:{attempt_number}"
+        )
+        packet_id = f"{route.get('package_id')}:{attempt_id}"
+        receipt_payload = {
+            "schema_version": SCHEMA_RECEIPT,
+            "harness_contract_hash": harness_contract_hash(),
+            "change_id": payload.get("change_id"),
+            "contract_fingerprint": payload.get("contract_fingerprint"),
+            "narrative_digest": payload.get("narrative_digest"),
+            "run_id": run_id,
+            "action": "apply",
+            "ref": ref,
+            "attempt_id": attempt_id,
+            "package_id": route.get("package_id"),
+            "packet_id": packet_id,
+            "role_id": route.get("effective_role_id"),
+            "agent": route.get("agent"),
+            "target_files": task.get("target_files", []),
+            "write_scope": task.get("write_scope", []),
+            "write_policy": task.get("write_policy"),
+            "allowed_write_roots": task.get("allowed_write_roots", []),
+            "join_id": join_id,
+            "wave_refs": wave_refs,
+            "worktree_mode": route.get("worktree_mode"),
+            "test_level": task.get("test_level"),
+            "shadow": shadow,
+        }
+        receipt_id = receipt_id_for_payload(receipt_payload)
+        receipts.append(
+            {
+                "receipt_id": receipt_id,
+                "ref": ref,
+                "attempt_id": attempt_id,
+                "packet_id": packet_id,
+                "token": receipt_id if not shadow else None,
+                "authoritative": not shadow,
+                "write_scope_count": len(receipt_payload["write_scope"]),
+                "wave_refs": wave_refs,
+                "test_level": receipt_payload["test_level"],
+                "snapshot": receipt_payload,
+            }
+        )
+    return receipts
+
+
+def supervisor_card_bytes() -> int:
+    path = (
+        Path(__file__).resolve().parents[1]
+        / ".agents"
+        / "skills"
+        / "openspec-loop-engineering"
+        / "SKILL.md"
+    )
+    return path.stat().st_size if path.is_file() else 0
+
+
+def append_control_event(
+    run: dict[str, Any],
+    kind: str,
+    *,
+    ref: str | None = None,
+    **details: Any,
+) -> None:
+    event = {
+        "kind": kind,
+        "hop_class": "control",
+        "executor": "cli",
+        "recorded_at_utc": utc_now(),
+        **details,
+    }
+    if ref:
+        event["ref"] = ref
+    run.setdefault("control_events", []).append(event)
+
+
+def persist_next_claims(
+    repo_root: Path,
+    change_id: str,
+    payload: dict[str, Any],
+    *,
+    run_id: str,
+    receipts: list[dict[str, Any]],
+    next_action: str,
+    selected_ref: str | None,
+) -> None:
+    config = load_loop_config(repo_root, change_id)
+    if not isinstance(config, dict):
+        raise ValueError("active next requires loop.json")
+    ledger_path = configured_ledger_path(repo_root, config, None)
+    ledger = load_or_init_ledger(ledger_path, change_id)
+    _, run = load_run(
+        ledger,
+        change_id,
+        str(payload.get("contract_fingerprint") or ""),
+        run_id,
+    )
+    claims = run.setdefault("receipt_claims", [])
+    for item in receipts:
+        if any(claim.get("receipt_id") == item["receipt_id"] for claim in claims):
+            continue
+        claims.append(
+            {
+                "receipt_id": item["receipt_id"],
+                "ref": item["ref"],
+                "attempt_id": item["attempt_id"],
+                "packet_id": item["packet_id"],
+                "status": "issued",
+                "issued_at_utc": utc_now(),
+                "snapshot": item["snapshot"],
+            }
+        )
+    append_control_event(
+        run,
+        "next",
+        intent="drain",
+        next_action=next_action,
+        refs=[item["ref"] for item in receipts]
+        or ([selected_ref] if selected_ref else []),
+        census_calls=1,
+        supervisor_card_bytes=supervisor_card_bytes(),
+        routing_source="cli",
+    )
+    ledger["updated_at_utc"] = utc_now()
+    write_json_atomic(ledger_path, ledger)
+
+
+def find_receipt_claim(
+    ledger: dict[str, Any],
+    *,
+    fingerprint: str,
+    run_id: str,
+    receipt_id: str,
+) -> dict[str, Any] | None:
+    episode = episode_for_fingerprint(ledger, fingerprint)
+    if not isinstance(episode, dict):
+        return None
+    ensure_episode_runs(episode)
+    for run in episode.get("runs", []):
+        if run.get("run_id") != run_id:
+            continue
+        return next(
+            (
+                claim
+                for claim in run.get("receipt_claims", [])
+                if claim.get("receipt_id") == receipt_id
+            ),
+            None,
+        )
+    return None
+
+
+def find_receipt_claim_context(
+    ledger: dict[str, Any],
+    *,
+    fingerprint: str,
+    receipt_id: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    episode = episode_for_fingerprint(ledger, fingerprint)
+    if not isinstance(episode, dict):
+        return None, None
+    ensure_episode_runs(episode)
+    for run in episode.get("runs", []):
+        claim = next(
+            (
+                item
+                for item in run.get("receipt_claims", [])
+                if item.get("receipt_id") == receipt_id
+            ),
+            None,
+        )
+        if isinstance(claim, dict):
+            return run, claim
+    return None, None
+
+
+def find_receipt_claim_any_run(
+    ledger: dict[str, Any],
+    *,
+    fingerprint: str,
+    receipt_id: str,
+) -> dict[str, Any] | None:
+    _, claim = find_receipt_claim_context(
+        ledger,
+        fingerprint=fingerprint,
+        receipt_id=receipt_id,
+    )
+    return claim
+
+
+def cmd_next(args: argparse.Namespace) -> int:
+    repo_root = args.repo_root.resolve()
+    payload = build_plan_payload(
+        repo_root,
+        args.change_id,
+        advisory=bool(args.shadow) or args.intent in {"review", "explore"},
+        batch=True,
+    )
+    next_action, selected_ref, action_reasons = choose_next_action(
+        repo_root,
+        args.change_id,
+        payload,
+        intent=args.intent,
+    )
+    receipts = (
+        build_apply_receipts(payload, run_id=args.run_id, shadow=bool(args.shadow))
+        if next_action == "apply"
+        else []
+    )
+    if (
+        not args.shadow
+        and args.intent == "drain"
+        and not payload.get("issues")
+        and payload.get("fingerprint_ready")
+    ):
+        persist_next_claims(
+            repo_root,
+            args.change_id,
+            payload,
+            run_id=args.run_id,
+            receipts=receipts,
+            next_action=next_action,
+            selected_ref=selected_ref,
+        )
+    legacy_action = (
+        "interview"
+        if payload.get("issues") or not payload.get("fingerprint_ready")
+        else "apply"
+        if payload.get("dispatch_refs")
+        else "design_verify"
+        if payload.get("tasks")
+        and len(payload.get("terminal_refs", [])) == len(payload.get("tasks", []))
+        else "stop"
+    )
+    result = {
+        "schema_version": SCHEMA_NEXT,
+        "change_id": args.change_id,
+        "run_id": args.run_id,
+        "intent": args.intent,
+        "shadow": bool(args.shadow),
+        "contract_fingerprint": payload.get("contract_fingerprint"),
+        "harness_contract_hash": harness_contract_hash(),
+        "next_action": next_action,
+        "selected_ref": selected_ref,
+        "action_reasons": action_reasons,
+        "selected_batch": payload.get("selected_batch", []),
+        "selected_wave": payload.get("selected_wave", []),
+        "dispatch_refs": payload.get("dispatch_refs", []),
+        "blocked_refs": payload.get("blocked_refs", []),
+        "census": {
+            "task_count": len(payload.get("tasks", [])),
+            "ready_count": len(payload.get("ready_refs", [])),
+            "blocked_count": len(payload.get("blocked_refs", [])),
+            "terminal_count": len(payload.get("terminal_refs", [])),
+        },
+        "apply_remaining": payload.get("apply_remaining", 0),
+        "receipts": [
+            {key: value for key, value in item.items() if key != "snapshot"}
+            for item in receipts
+        ],
+        "issues": payload.get("issues", []),
+        "warnings": payload.get("warnings", []),
+        "shadow_parity": {
+            "legacy_action": legacy_action,
+            "matches_legacy": (
+                next_action == legacy_action
+                and [item["ref"] for item in receipts]
+                == list(payload.get("dispatch_refs", []))
+                if next_action == "apply"
+                else next_action == legacy_action
+            ),
+        },
+        "ablation": {
+            "census_calls": 1,
+            "routing_source": "cli",
+            "supervisor_card_bytes": supervisor_card_bytes(),
+            "receipt_path_avoids_worker_census": True,
+            "control_hop_count": 1,
+            "work_hop_count": 0,
+            "cli_control_call_count": 1,
+            "llm_control_call_count": 0,
+            "llm_control_visibility": False,
+            "per_ref": {
+                item["ref"]: {
+                    "census_calls_before_packet": 1,
+                    "routing_source": "cli",
+                }
+                for item in receipts
+            },
+        },
+    }
+    if args.verbose:
+        result["ready_refs"] = payload.get("ready_refs", [])
+        result["terminal_refs"] = payload.get("terminal_refs", [])
+        result["routing"] = payload.get("routing", [])
+        result["tasks"] = payload.get("tasks", [])
+    emit_json(result)
+    return 0 if args.shadow or not result["issues"] else 2
+
+
+def receipt_validation_issues(
+    repo_root: Path,
+    change_id: str,
+    receipt: dict[str, Any],
+    *,
+    ref: str | None,
+) -> list[str]:
+    issues: list[str] = []
+    if receipt.get("schema_version") != SCHEMA_RECEIPT:
+        issues.append("unsupported receipt schema")
+    if receipt.get("change_id") != change_id:
+        issues.append("receipt change_id mismatch")
+    if ref and receipt.get("ref") != ref:
+        issues.append("receipt ref mismatch")
+    if receipt.get("harness_contract_hash") != harness_contract_hash():
+        issues.append("harness contract drift")
+    config = load_loop_config(repo_root, change_id)
+    config_issues = loop_config_issues(config, change_id)
+    issues.extend(config_issues)
+    if isinstance(config, dict):
+        if config.get("contract_fingerprint") != receipt.get("contract_fingerprint"):
+            issues.append("sealed contract fingerprint drift")
+        if pending_irreversible_policy(config):
+            issues.append("unconfirmed irreversible policy")
+    try:
+        current_fingerprint = compute_semantic_fingerprint(repo_root, change_id)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        issues.append(str(exc))
+    else:
+        if receipt.get("contract_fingerprint") != current_fingerprint:
+            issues.append("contract fingerprint drift")
+    try:
+        current_narrative = compute_narrative_digest(repo_root, change_id)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        issues.append(str(exc))
+    else:
+        if receipt.get("narrative_digest") != current_narrative:
+            issues.append("narrative digest drift")
+    return list(dict.fromkeys(issues))
+
+
+def cmd_receipt_check(args: argparse.Namespace) -> int:
+    repo_root = args.repo_root.resolve()
+    receipt_id = args.receipt.strip()
+    receipt: dict[str, Any] = {}
+    claim: dict[str, Any] | None = None
+    claim_run: dict[str, Any] | None = None
+    ledger: dict[str, Any] | None = None
+    ledger_path: Path | None = None
+    issues: list[str] = []
+    if not re.fullmatch(r"[0-9a-f]{20}", receipt_id):
+        issues.append("invalid receipt id")
+    config = load_loop_config(repo_root, args.change_id)
+    if not issues and isinstance(config, dict):
+        ledger_path = configured_ledger_path(repo_root, config, None)
+        if ledger_path.is_file():
+            ledger = load_or_init_ledger(ledger_path, args.change_id)
+            claim_run, claim = find_receipt_claim_context(
+                ledger,
+                fingerprint=str(config.get("contract_fingerprint") or ""),
+                receipt_id=receipt_id,
+            )
+    if claim is None:
+        issues.append("receipt was not issued by active next")
+    else:
+        snapshot = claim.get("snapshot")
+        if not isinstance(snapshot, dict):
+            issues.append("receipt claim has no packet snapshot")
+        else:
+            receipt = snapshot
+            issues.extend(
+                receipt_validation_issues(
+                    repo_root, args.change_id, receipt, ref=args.ref
+                )
+            )
+    valid = not issues
+    claim_state = str(claim.get("status")) if isinstance(claim, dict) else None
+    authoritative = valid and claim_state == "issued"
+    if authoritative and claim_run is not None and ledger is not None and ledger_path is not None:
+        append_control_event(
+            claim_run,
+            "receipt_check",
+            ref=str(receipt.get("ref") or "") or None,
+            receipt_id=receipt_id,
+        )
+        ledger["updated_at_utc"] = utc_now()
+        write_json_atomic(ledger_path, ledger)
+    compact_receipt = (
+        {
+            "schema_version": receipt.get("schema_version"),
+            "change_id": receipt.get("change_id"),
+            "contract_fingerprint": receipt.get("contract_fingerprint"),
+            "harness_contract_hash": receipt.get("harness_contract_hash"),
+            "run_id": receipt.get("run_id"),
+            "action": receipt.get("action"),
+            "ref": receipt.get("ref"),
+            "attempt_id": receipt.get("attempt_id"),
+            "packet_id": receipt.get("packet_id"),
+            "role_id": receipt.get("role_id"),
+            "write_scope_count": len(receipt.get("write_scope", [])),
+            "join_id": receipt.get("join_id"),
+            "wave_refs": receipt.get("wave_refs", []),
+            "test_level": receipt.get("test_level"),
+        }
+        if receipt
+        else {}
+    )
+    emit_json(
+        {
+            "schema_version": SCHEMA_RECEIPT_CHECK,
+            "change_id": args.change_id,
+            "valid": valid,
+            "authoritative": authoritative,
+            "claim_state": claim_state,
+            "receipt_id": receipt_id,
+            "receipt": compact_receipt,
+            "issues": list(dict.fromkeys(issues)),
+        }
+    )
+    return 0 if valid else 2
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
@@ -2944,6 +3774,53 @@ def cmd_seal(args: argparse.Namespace) -> int:
                 }
             )
             return 2
+
+    prior_change_budget = (
+        prior_budgets.get("change")
+        if isinstance(prior_budgets.get("change"), dict)
+        else {}
+    )
+    budget_changes = {
+        field: budgets["change"][field]
+        for field in budgets["change"]
+        if isinstance(prior_change_budget.get(field), int)
+        and not isinstance(prior_change_budget.get(field), bool)
+        and prior_change_budget[field] != budgets["change"][field]
+    }
+    budget_increases = {
+        field: value
+        for field, value in budget_changes.items()
+        if value > prior_change_budget[field]
+    }
+    if budget_changes and not args.reason:
+        emit_json(
+            {
+                "schema_version": SCHEMA_LOOP,
+                "change_id": args.change_id,
+                "written": False,
+                "issues": ["a budget change requires --reason"],
+            }
+        )
+        return 2
+    if budget_increases and hard_ceiling:
+        used = self_extensions_used(prior)
+        max_extensions = hard_ceiling.get("max_self_extensions")
+        if isinstance(max_extensions, int) and used >= max_extensions:
+            emit_json(
+                {
+                    "schema_version": SCHEMA_LOOP,
+                    "change_id": args.change_id,
+                    "written": False,
+                    "issues": [
+                        "hard_ceiling.max_self_extensions reached: "
+                        f"{max_extensions}"
+                    ],
+                    "hard_ceiling": hard_ceiling,
+                    "self_extensions_used": used,
+                }
+            )
+            return 2
+    if hard_ceiling:
         contradictions = [
             f"budgets.change.{budget_key} exceeds hard_ceiling.{ceiling_key}"
             for ceiling_key, budget_key in HARD_CEILING_BUDGET_LINKS
@@ -3004,6 +3881,24 @@ def cmd_seal(args: argparse.Namespace) -> int:
         config["budget_extensions"] = json.loads(
             json.dumps(prior["budget_extensions"], ensure_ascii=False)
         )
+    if budget_changes:
+        config.setdefault("budget_extensions", []).append(
+            {
+                "recorded_at_utc": utc_now(),
+                "scope": "change",
+                "fields": sorted(budget_changes),
+                "from": {
+                    field: prior_change_budget[field]
+                    for field in sorted(budget_changes)
+                },
+                "to": {
+                    field: budget_changes[field] for field in sorted(budget_changes)
+                },
+                "autonomy": autonomy,
+                "confirmed": True,
+                "reason": args.reason,
+            }
+        )
     if hard_ceiling:
         config["hard_ceiling"] = hard_ceiling
     changed_fields = seal_changed_fields(prior, config)
@@ -3022,6 +3917,7 @@ def cmd_seal(args: argparse.Namespace) -> int:
             "semantic_change": semantic_change,
             "changed_fields": changed_fields,
             "budget_advisories": [],
+            "self_extensions_used": self_extensions_used(config),
             "contract_fingerprint": config["contract_fingerprint"],
             "narrative_digest": config["narrative_digest"],
         }
@@ -3108,7 +4004,576 @@ def task_structure_signature(task: TaskEntry) -> dict[str, Any]:
         "execution": task.execution_raw,
         "join": task.join_raw,
         "worktree": task.worktree_raw,
+        "repair_policy": task.repair_policy_raw,
+        "test_level": task.test_level_raw,
     }
+
+
+def repair_r1_structure_signature(task: TaskEntry) -> dict[str, Any]:
+    signature = task_structure_signature(task)
+    signature.pop("state", None)
+    signature["files"] = task.files_raw
+    return signature
+
+
+def stable_accept_obligation_signature(text: str) -> str:
+    """Normalize only mechanically recognizable legacy method tokens."""
+
+    relaxations = (
+        "best effort",
+        "optional",
+        "may omit",
+        "can omit",
+        "允许缺失",
+        "可以不",
+        "不再要求",
+        "可选",
+    )
+    lowered = text.lower()
+    relaxation_hits = sorted(term for term in relaxations if term in lowered)
+
+    def replace_backtick(match: re.Match[str]) -> str:
+        token = match.group(1).strip()
+        path_like = (
+            "/" in token
+            or "\\" in token
+            or bool(re.search(r"\.[A-Za-z0-9]{1,8}(?:$|\s)", token))
+            or bool(re.match(r"^[A-Za-z]:", token))
+        )
+        method_markers = (
+            "method",
+            "pipeline",
+            "protocol",
+            "executor",
+            "execution",
+            "runner",
+            "parser",
+            "solver",
+            "algorithm",
+            "workflow",
+            "runtime",
+            "tool",
+            "方法",
+            "流程",
+            "协议",
+            "执行",
+            "解析",
+            "求解",
+            "算法",
+            "运行",
+            "工具",
+        )
+        method_like = (
+            not path_like
+            and not any(character.isdigit() for character in token)
+            and not any(character.isspace() for character in token)
+            and any(marker in token.lower() for marker in method_markers)
+        )
+        return "<METHOD>" if method_like else f"`{token}`"
+
+    normalized = re.sub(r"`([^`]+)`", replace_backtick, text)
+    normalized = " ".join(normalized.split())
+    return json.dumps(
+        {"text": normalized, "relaxations": relaxation_hits},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+def test_scope_signature(text: str) -> list[str]:
+    return re.findall(r"SCOPE\s*:\s*([A-Za-z]+)", text, re.IGNORECASE)
+
+
+def stable_test_non_run_signature(text: str) -> list[str]:
+    signature: list[str] = []
+    in_run_block = False
+    boundary = re.compile(
+        r"^(?:SCOPE|Verify|Validate|Assert|Expected|Evidence|Environment|"
+        r"Precondition|Postcondition|Check|Acceptance)\s*:",
+        re.IGNORECASE,
+    )
+    for line in text.splitlines():
+        normalized = " ".join(line.split())
+        run = re.match(r"^Run\s*:(?P<body>.*)$", normalized, re.IGNORECASE)
+        if run:
+            signature.append("Run: <EXEC_BLOCK>")
+            in_run_block = not bool(run.group("body").strip())
+            continue
+        if in_run_block and not boundary.match(normalized):
+            continue
+        in_run_block = False
+        signature.append(normalized)
+    return signature
+
+
+def explicit_contract_paths(text: str) -> set[str]:
+    pattern = re.compile(
+        r"(?:[A-Za-z]:[\\/][^\s`\"']+|"
+        r"(?:outputs|src|scripts|docs|openspec|tests|figure|colab|cloud|data)/"
+        r"[^\s`\"']+)",
+        re.IGNORECASE,
+    )
+    return {normalize_record_path(match.group(0).rstrip(".,;:)")) for match in pattern.finditer(text)}
+
+
+def _heading_allows_repair_r1(title: str) -> bool:
+    lowered = title.lower()
+    return any(token in lowered for token in REPAIR_R1_METHOD_HEADINGS)
+
+
+def _selected_marker_projection(
+    text: str,
+    ref: str,
+) -> tuple[str | None, str | None, list[str]]:
+    lines = text.splitlines(keepends=True)
+    markers: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
+        match = REPAIR_R1_MARKER_RE.match(line.rstrip("\r\n"))
+        if match and match.group("ref") == ref:
+            markers.append((index, match.group("edge").lower()))
+    if not markers:
+        return None, None, []
+    if len(markers) != 2 or markers[0][1] != "start" or markers[1][1] != "end":
+        return None, None, [f"repair_r1_marker_pair_invalid:{ref}"]
+    start, end = markers[0][0], markers[1][0]
+    if start >= end:
+        return None, None, [f"repair_r1_marker_order_invalid:{ref}"]
+    heading = next(
+        (
+            match.group(2).strip()
+            for line in reversed(lines[:start])
+            if (match := HEADING_RE.match(line.rstrip("\r\n")))
+        ),
+        "",
+    )
+    if not _heading_allows_repair_r1(heading):
+        return None, None, [f"repair_r1_marker_outside_method_heading:{ref}"]
+    mutable = "".join(lines[start + 1 : end])
+    projection = "".join(
+        lines[: start + 1]
+        + [f"<openspec:repair-r1-method ref={ref}>\n"]
+        + lines[end:]
+    )
+    return projection, mutable, []
+
+
+def repair_r1_marker_layout_issues(
+    text: str,
+    *,
+    active_refs: list[str],
+    source: str,
+) -> list[str]:
+    markers: list[tuple[int, str, str]] = []
+    issues: list[str] = []
+    for index, line in enumerate(text.splitlines(), start=1):
+        if "openspec:repair-r1-method" not in line:
+            continue
+        match = REPAIR_R1_MARKER_RE.match(line)
+        if match is None:
+            issues.append(f"repair_r1_marker_layout_invalid:{source}:malformed:{index}")
+            continue
+        markers.append((index, match.group("ref"), match.group("edge").lower()))
+    if not markers:
+        return issues
+
+    active = set(active_refs)
+    counts: dict[str, dict[str, int]] = {}
+    open_ref: str | None = None
+    for index, marker_ref, edge in markers:
+        if marker_ref not in active:
+            issues.append(
+                f"repair_r1_marker_layout_invalid:{source}:unknown_ref:{marker_ref}:{index}"
+            )
+        ref_counts = counts.setdefault(marker_ref, {"start": 0, "end": 0})
+        ref_counts[edge] += 1
+        if edge == "start":
+            if open_ref is not None:
+                issues.append(
+                    f"repair_r1_marker_layout_invalid:{source}:nested:{open_ref}:{marker_ref}"
+                )
+            else:
+                open_ref = marker_ref
+        elif open_ref != marker_ref:
+            issues.append(
+                f"repair_r1_marker_layout_invalid:{source}:crossed:{open_ref or 'none'}:{marker_ref}"
+            )
+        else:
+            open_ref = None
+    if open_ref is not None:
+        issues.append(f"repair_r1_marker_layout_invalid:{source}:unclosed:{open_ref}")
+    for marker_ref, ref_counts in sorted(counts.items()):
+        if ref_counts != {"start": 1, "end": 1}:
+            issues.append(
+                f"repair_r1_marker_layout_invalid:{source}:pair_count:{marker_ref}"
+            )
+    return list(dict.fromkeys(issues))
+
+
+def repair_r1_marker_content_issues(
+    text: str,
+    *,
+    ref: str,
+    source: str,
+) -> list[str]:
+    issues: list[str] = []
+    forbidden_directive = re.compile(
+        r"^\s*(?:[-*]\s*)?(?:GOAL|COVERED_BY|ACCEPT|TEST|FILES|WRITE_SCOPE|"
+        r"REPAIR_POLICY|TEST_LEVEL|ROLE_ID|DEPENDS_ON|STATE|SUPERSEDES|RETENTION|AUTONOMY|"
+        r"HARD_CEILING|BUDGETS?)\s*:",
+        re.IGNORECASE,
+    )
+    for index, line in enumerate(text.splitlines(), start=1):
+        if HEADING_RE.match(line) or forbidden_directive.match(line):
+            issues.append(
+                f"repair_r1_marker_content_outside_method:{source}:{ref}:{index}"
+            )
+    return issues
+
+
+def _markdown_sections(text: str) -> list[tuple[int, str, str]]:
+    lines = text.splitlines(keepends=True)
+    headings: list[tuple[int, int, str]] = []
+    for index, line in enumerate(lines):
+        match = HEADING_RE.match(line.rstrip("\r\n"))
+        if match:
+            headings.append((index, len(match.group(1)), match.group(2).strip()))
+    sections: list[tuple[int, str, str]] = []
+    for position, (start, level, title) in enumerate(headings):
+        end = headings[position + 1][0] if position + 1 < len(headings) else len(lines)
+        sections.append((level, title, "".join(lines[start:end])))
+    return sections
+
+
+def design_method_change_projection(
+    before: str,
+    after: str,
+    *,
+    ref: str,
+    active_ref_count: int,
+) -> tuple[str | None, list[str]]:
+    before_projection, before_mutable, before_issues = _selected_marker_projection(
+        before, ref
+    )
+    after_projection, after_mutable, after_issues = _selected_marker_projection(after, ref)
+    issues = before_issues + after_issues
+    if issues:
+        return None, issues
+    if before_projection is not None or after_projection is not None:
+        if before_projection is None or after_projection is None:
+            return None, [f"repair_r1_marker_missing_from_candidate_or_baseline:{ref}"]
+        if before_projection != after_projection:
+            return None, [f"repair_r1_design_outside_method_changed:{ref}"]
+        if before_mutable == after_mutable:
+            return None, [f"repair_r1_design_method_unchanged:{ref}"]
+        marker_content_issues = repair_r1_marker_content_issues(
+            before_mutable or "", ref=ref, source="baseline"
+        ) + repair_r1_marker_content_issues(
+            after_mutable or "", ref=ref, source="candidate"
+        )
+        if marker_content_issues:
+            return None, marker_content_issues
+        return before_projection, []
+
+    before_sections = _markdown_sections(before)
+    after_sections = _markdown_sections(after)
+    before_shape = [(level, title) for level, title, _ in before_sections]
+    after_shape = [(level, title) for level, title, _ in after_sections]
+    if before_shape != after_shape:
+        return None, [f"repair_r1_design_heading_shape_changed:{ref}"]
+    changed = [
+        index
+        for index, (left, right) in enumerate(zip(before_sections, after_sections))
+        if left[2] != right[2]
+    ]
+    if len(changed) != 1:
+        return None, [f"repair_r1_design_ambiguous_or_outside_method:{ref}"]
+    index = changed[0]
+    _, title, _ = before_sections[index]
+    if not _heading_allows_repair_r1(title):
+        return None, [f"repair_r1_design_outside_method_changed:{ref}"]
+    if active_ref_count != 1 and ref.lower() not in title.lower():
+        return None, [f"repair_r1_legacy_method_not_ref_scoped:{ref}"]
+    projected = list(before_sections)
+    projected[index] = (
+        projected[index][0],
+        projected[index][1],
+        f"## <openspec:repair-r1-legacy-method ref={ref}>\n",
+    )
+    return "".join(section for _, _, section in projected), []
+
+
+def strip_repair_r1_mutable_lines(block: str) -> list[str]:
+    immutable: list[str] = []
+    skip_mode: str | None = None
+    for line in block.splitlines():
+        if re.match(r"^\s*-\s*(ACCEPT|TEST)\s*:", line, re.IGNORECASE):
+            skip_mode = "body"
+            continue
+        if re.match(r"^\s*-\s*(STATE|REPAIR_POLICY)\s*:", line, re.IGNORECASE):
+            skip_mode = None
+            continue
+        if skip_mode and (line.startswith("    ") or not line.strip()):
+            continue
+        if skip_mode:
+            skip_mode = None
+        immutable.append(line.rstrip())
+    return immutable
+
+
+def compute_narrative_digest_with_overrides(
+    repo_root: Path,
+    change_id: str,
+    overrides: dict[Path, bytes],
+) -> str:
+    change_dir = repo_root / "openspec" / "changes" / change_id
+    normalized_overrides = {path.resolve(): payload for path, payload in overrides.items()}
+    digest = hashlib.sha256()
+    for path in narrative_artifact_paths(repo_root, change_id):
+        digest.update(path.relative_to(change_dir).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(normalized_overrides.get(path.resolve(), path.read_bytes()))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def repair_r1_obligation_hash(
+    *,
+    repo_root: Path,
+    change_id: str,
+    ref: str,
+    tasks_text: str,
+    design_projection: str,
+    config: dict[str, Any],
+) -> str:
+    tasks = parse_task_file(tasks_text)
+    by_ref = {task.ref: task for task in tasks}
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    import generate_openspec_feature_list as generator
+
+    parsed = {task.ref: task for task in generator.parse_tasks(tasks_text)}[ref]
+    change_dir = repo_root / "openspec" / "changes" / change_id
+    narrative_hashes = {
+        path.relative_to(change_dir).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in narrative_artifact_paths(repo_root, change_id)
+        if path.resolve() != (change_dir / "design.md").resolve()
+    }
+    blocks = active_task_blocks(tasks_text)
+    payload = {
+        "ref": ref,
+        "registry_preamble": active_registry_preamble(tasks_text),
+        "other_ref_blocks": {
+            candidate: block for candidate, block in blocks.items() if candidate != ref
+        },
+        "task_structure": repair_r1_structure_signature(by_ref[ref]),
+        "accept": stable_accept_obligation_signature("\n".join(parsed.accept_lines)),
+        "test_structure": stable_test_non_run_signature("\n".join(parsed.test_lines)),
+        "design_projection": design_projection,
+        "narrative_hashes": narrative_hashes,
+        "policy": {
+            "retention": config.get("retention"),
+            "paths": config.get("paths"),
+            "autonomy": config.get("autonomy"),
+            "hard_ceiling": config.get("hard_ceiling"),
+            "budgets": config.get("budgets"),
+            "per_ref_budget": (config.get("per_ref_budgets") or {}).get(ref),
+        },
+    }
+    return sha256_texts(
+        b"openspec-loop.repair-r1-obligation.v1",
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+    )
+
+
+def repair_r1_candidate_reasons(
+    *,
+    repo_root: Path,
+    change_id: str,
+    ref: str,
+    baseline_tasks: str,
+    candidate_tasks: str,
+    baseline_design: str,
+    candidate_design: str,
+    config: dict[str, Any],
+    ledger: dict[str, Any],
+    source_fingerprint: str,
+) -> tuple[list[str], str | None]:
+    reasons: list[str] = []
+    before_tasks = parse_task_file(baseline_tasks)
+    after_tasks = parse_task_file(candidate_tasks)
+    before_refs = [task.ref for task in before_tasks]
+    after_refs = [task.ref for task in after_tasks]
+    if before_refs != after_refs:
+        return ["repair_r1_ref_set_or_order_changed"], None
+    before_by_ref = {task.ref: task for task in before_tasks}
+    after_by_ref = {task.ref: task for task in after_tasks}
+    if ref not in before_by_ref:
+        return [f"repair_r1_unknown_ref:{ref}"], None
+    before = before_by_ref[ref]
+    after = after_by_ref[ref]
+    if before.checked:
+        reasons.append(f"repair_r1_passed_ref_forbidden:{ref}")
+    if before.repair_policy_raw != REPAIR_POLICY_BOUNDED_R1:
+        reasons.append(f"repair_r1_policy_required:{ref}")
+    if after.repair_policy_raw != before.repair_policy_raw:
+        reasons.append(f"repair_r1_policy_changed:{ref}")
+    if repair_r1_structure_signature(before) != repair_r1_structure_signature(after):
+        reasons.append(f"repair_r1_framework_or_dag_changed:{ref}")
+    if before.files_raw != after.files_raw:
+        reasons.append(f"repair_r1_files_changed:{ref}")
+    allowed_state = (
+        before.state_raw in {None, "blocked", "deviated", "pending"}
+        and after.state_raw in {None, "pending"}
+    )
+    if not allowed_state:
+        reasons.append(f"repair_r1_state_transition_invalid:{ref}")
+
+    before_blocks = active_task_blocks(baseline_tasks)
+    after_blocks = active_task_blocks(candidate_tasks)
+    if active_registry_preamble(baseline_tasks) != active_registry_preamble(candidate_tasks):
+        reasons.append("repair_r1_goal_or_registry_preamble_changed")
+    for candidate_ref in before_refs:
+        if candidate_ref != ref and before_blocks.get(candidate_ref) != after_blocks.get(
+            candidate_ref
+        ):
+            reasons.append(f"repair_r1_other_ref_changed:{candidate_ref}")
+    if strip_repair_r1_mutable_lines(before_blocks.get(ref, "")) != (
+        strip_repair_r1_mutable_lines(after_blocks.get(ref, ""))
+    ):
+        reasons.append(f"repair_r1_non_allowlisted_task_prose_changed:{ref}")
+
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    import generate_openspec_feature_list as generator
+
+    parsed_before = {task.ref: task for task in generator.parse_tasks(baseline_tasks)}[ref]
+    parsed_after = {task.ref: task for task in generator.parse_tasks(candidate_tasks)}[ref]
+    accept_before = "\n".join(parsed_before.accept_lines)
+    accept_after = "\n".join(parsed_after.accept_lines)
+    explicit_marker_mode = any(
+        (match := REPAIR_R1_MARKER_RE.match(line))
+        and match.group("ref") == ref
+        for line in baseline_design.splitlines()
+    )
+    if explicit_marker_mode and accept_before != accept_after:
+        reasons.append(f"repair_r1_accept_outcome_changed:{ref}")
+    elif not explicit_marker_mode and stable_accept_obligation_signature(
+        accept_before
+    ) != stable_accept_obligation_signature(accept_after):
+        reasons.append(f"repair_r1_accept_obligation_changed:{ref}")
+    test_before = "\n".join(parsed_before.test_lines)
+    test_after = "\n".join(parsed_after.test_lines)
+    if test_scope_signature(test_before) != test_scope_signature(test_after):
+        reasons.append(f"repair_r1_test_scope_changed:{ref}")
+    if stable_test_non_run_signature(test_before) != stable_test_non_run_signature(
+        test_after
+    ):
+        reasons.append(f"repair_r1_test_non_run_changed:{ref}")
+    if not re.search(r"^Run\s*:", test_after, re.IGNORECASE | re.MULTILINE):
+        reasons.append(f"repair_r1_test_missing_run:{ref}")
+    if re.search(r"--commit\b", test_after, re.IGNORECASE) and not re.search(
+        r"--commit\b", test_before, re.IGNORECASE
+    ):
+        reasons.append(f"repair_r1_product_commit_forbidden:{ref}")
+    new_test_paths = explicit_contract_paths(test_after) - explicit_contract_paths(
+        test_before
+    )
+    if new_test_paths:
+        declared = parse_scope_tokens(after.files_raw) + parse_scope_tokens(
+            after.write_scope_raw
+        )
+        outside_test_paths = [
+            path
+            for path in sorted(new_test_paths)
+            if not path_within_declared_scope(path, declared)
+        ]
+        if outside_test_paths:
+            reasons.append(f"repair_r1_test_path_outside_scope:{ref}")
+    reasons.extend(
+        repair_r1_marker_layout_issues(
+            baseline_design, active_refs=before_refs, source="baseline"
+        )
+    )
+    reasons.extend(
+        repair_r1_marker_layout_issues(
+            candidate_design, active_refs=before_refs, source="candidate"
+        )
+    )
+    _, baseline_method, _ = _selected_marker_projection(baseline_design, ref)
+    _, candidate_method, _ = _selected_marker_projection(candidate_design, ref)
+    if baseline_method is not None and candidate_method is not None:
+        new_marker_paths = explicit_contract_paths(
+            candidate_method
+        ) - explicit_contract_paths(baseline_method)
+        declared = parse_scope_tokens(after.files_raw) + parse_scope_tokens(
+            after.write_scope_raw
+        )
+        if any(
+            not path_within_declared_scope(path, declared)
+            for path in new_marker_paths
+        ):
+            reasons.append(f"repair_r1_marker_path_outside_scope:{ref}")
+    design_projection, design_issues = design_method_change_projection(
+        baseline_design,
+        candidate_design,
+        ref=ref,
+        active_ref_count=len(before_refs),
+    )
+    reasons.extend(design_issues)
+    if compute_semantic_fingerprint_text(baseline_tasks) == compute_semantic_fingerprint_text(
+        candidate_tasks
+    ):
+        reasons.append("repair_r1_candidate_has_no_semantic_change")
+
+    task_budget = ref_budget_of(config, merge_budget_defaults(config.get("budgets")), ref)
+    explicit_ref_budget = (config.get("per_ref_budgets") or {}).get(ref)
+    if not isinstance(explicit_ref_budget, dict) or (
+        explicit_ref_budget.get("max_apply_attempts") != 3
+        or task_budget["max_apply_attempts"] != 3
+    ):
+        reasons.append(f"repair_r1_requires_max_apply_attempts_3:{ref}")
+    attempts = attempts_for_ref_lineage(ledger, config, source_fingerprint, ref)
+    latest_unblock = next(
+        (item for item in reversed(attempts) if item.get("kind") == "unblock"),
+        None,
+    )
+    if not has_blocking_evidence(attempts, ref):
+        reasons.append(f"repair_r1_requires_blocking_window:{ref}")
+    if not (
+        latest_unblock
+        and latest_unblock.get("disposition") == "amend_spec"
+        and latest_unblock.get("repair_class") == "R1"
+    ):
+        reasons.append(f"repair_r1_requires_r1_amend_spec:{ref}")
+
+    obligation_hash: str | None = None
+    if design_projection is not None:
+        obligation_hash = repair_r1_obligation_hash(
+            repo_root=repo_root,
+            change_id=change_id,
+            ref=ref,
+            tasks_text=baseline_tasks,
+            design_projection=design_projection,
+            config=config,
+        )
+        candidate_hash = repair_r1_obligation_hash(
+            repo_root=repo_root,
+            change_id=change_id,
+            ref=ref,
+            tasks_text=candidate_tasks,
+            design_projection=design_projection,
+            config=config,
+        )
+        if candidate_hash != obligation_hash:
+            reasons.append(f"repair_r1_obligation_hash_changed:{ref}")
+        if any(
+            item.get("obligation_hash") == obligation_hash
+            for item in repair_r1_history_of(config)
+        ):
+            reasons.append(f"repair_r1_obligation_already_repaired:{ref}")
+    return reasons, obligation_hash
 
 
 def protected_accept_atoms(text: str) -> set[str]:
@@ -3344,9 +4809,16 @@ def cmd_reseal(args: argparse.Namespace) -> int:
         "user_confirmed" if args.confirmed else "full_auto"
     )
     self_confirm = stamp_source == "unblock_self_confirm"
+    repair_r1 = stamp_source == "repair_r1"
+    contract_candidate = self_confirm or repair_r1
 
     candidate_tasks = baseline_tasks
     candidate_path: Path | None = None
+    change_dir = repo_root / "openspec" / "changes" / change_id
+    design_path = change_dir / "design.md"
+    baseline_design = read_utf8(design_path) if design_path.is_file() else ""
+    candidate_design = baseline_design
+    candidate_design_path: Path | None = None
     if self_confirm:
         if autonomy != "supervised":
             return reseal_failure(
@@ -3402,9 +4874,93 @@ def cmd_reseal(args: argparse.Namespace) -> int:
         if not candidate_path.is_file():
             return reseal_failure(change_id, [f"missing candidate tasks: {candidate_path}"])
         candidate_tasks = read_utf8(candidate_path)
+    elif repair_r1:
+        if args.confirmed:
+            return reseal_failure(
+                change_id,
+                ["repair_r1 must not use --confirmed"],
+                autonomy=autonomy,
+            )
+        if (
+            not args.ref
+            or args.candidate_tasks is None
+            or args.candidate_design is None
+            or not args.reason
+        ):
+            return reseal_failure(
+                change_id,
+                [
+                    "repair_r1 requires --ref, --candidate-tasks, "
+                    "--candidate-design, and --reason"
+                ],
+                autonomy=autonomy,
+            )
+        if any(
+            getattr(args, name, None) is not None
+            for name, _ in CHANGE_BUDGET_OVERRIDES
+        ) or args.narrative_policy:
+            return reseal_failure(
+                change_id,
+                ["repair_r1 cannot change budgets or narrative policy"],
+                autonomy=autonomy,
+            )
+        if compute_semantic_fingerprint_text(baseline_tasks) != source_fingerprint:
+            return reseal_failure(
+                change_id,
+                ["active tasks must still match the sealed fingerprint before repair_r1"],
+                autonomy=autonomy,
+            )
+        if compute_narrative_digest(repo_root, change_id) != config.get(
+            "narrative_digest"
+        ):
+            return reseal_failure(
+                change_id,
+                ["narrative artifacts must match loop.json before repair_r1"],
+                autonomy=autonomy,
+            )
+        scratch = config.get("paths", {}).get("scratch")
+        if not isinstance(scratch, str) or not scratch:
+            return reseal_failure(change_id, ["repair_r1 requires configured scratch"])
+        scratch_path = Path(scratch)
+        if not scratch_path.is_absolute():
+            scratch_path = repo_root / scratch_path
+        scratch_path = scratch_path.resolve()
+        candidate_path = args.candidate_tasks
+        candidate_design_path = args.candidate_design
+        if not candidate_path.is_absolute():
+            candidate_path = repo_root / candidate_path
+        if not candidate_design_path.is_absolute():
+            candidate_design_path = repo_root / candidate_design_path
+        candidate_path = candidate_path.resolve()
+        candidate_design_path = candidate_design_path.resolve()
+        for candidate, label in (
+            (candidate_path, "--candidate-tasks"),
+            (candidate_design_path, "--candidate-design"),
+        ):
+            try:
+                candidate.relative_to(scratch_path)
+            except ValueError:
+                return reseal_failure(
+                    change_id,
+                    [f"{label} must be inside the configured scratch root"],
+                )
+            if not candidate.is_file():
+                return reseal_failure(change_id, [f"missing {label}: {candidate}"])
+        if not design_path.is_file():
+            return reseal_failure(change_id, ["repair_r1 requires an existing design.md"])
+        candidate_tasks = read_utf8(candidate_path)
+        candidate_design = read_utf8(candidate_design_path)
 
     semantic = compute_semantic_fingerprint_text(candidate_tasks)
-    narrative = compute_narrative_digest(repo_root, change_id)
+    narrative = (
+        compute_narrative_digest_with_overrides(
+            repo_root,
+            change_id,
+            {design_path: candidate_design.encode("utf-8")},
+        )
+        if repair_r1
+        else compute_narrative_digest(repo_root, change_id)
+    )
     semantic_change = not legacy and source_fingerprint != semantic
     if semantic_change and not args.allow_semantic_change:
         return reseal_failure(
@@ -3417,7 +4973,7 @@ def cmd_reseal(args: argparse.Namespace) -> int:
             semantic_change=True,
             autonomy=autonomy,
         )
-    if semantic_change and not self_confirm and not (
+    if semantic_change and not contract_candidate and not (
         args.confirmed or autonomy == "full_auto"
     ):
         return reseal_failure(
@@ -3433,8 +4989,9 @@ def cmd_reseal(args: argparse.Namespace) -> int:
             semantic_change=True,
             autonomy=autonomy,
         )
-    if self_confirm and not semantic_change:
-        return reseal_failure(change_id, ["self-restamp candidate has no semantic change"])
+    if contract_candidate and not semantic_change:
+        label = "self-restamp" if self_confirm else "repair_r1"
+        return reseal_failure(change_id, [f"{label} candidate has no semantic change"])
 
     updated = json.loads(json.dumps(config, ensure_ascii=False))
     updated["schema_version"] = SCHEMA_LOOP
@@ -3533,6 +5090,7 @@ def cmd_reseal(args: argparse.Namespace) -> int:
 
     revision_charged = False
     opens_new_chapter = False
+    repair_record: dict[str, Any] | None = None
     if semantic_change:
         ledger_path = configured_ledger_path(repo_root, config, None)
         ledger = load_or_init_ledger(ledger_path, change_id)
@@ -3556,6 +5114,36 @@ def cmd_reseal(args: argparse.Namespace) -> int:
                     semantic_change=True,
                     autonomy=autonomy,
                 )
+        elif repair_r1:
+            repair_reasons, obligation_hash = repair_r1_candidate_reasons(
+                repo_root=repo_root,
+                change_id=change_id,
+                ref=args.ref,
+                baseline_tasks=baseline_tasks,
+                candidate_tasks=candidate_tasks,
+                baseline_design=baseline_design,
+                candidate_design=candidate_design,
+                config=config,
+                ledger=ledger,
+                source_fingerprint=source_fingerprint,
+            )
+            if repair_reasons:
+                return reseal_failure(
+                    change_id,
+                    repair_reasons,
+                    semantic_change=True,
+                    autonomy=autonomy,
+                    repair_class="R2",
+                )
+            assert obligation_hash is not None
+            repair_record = {
+                "ref": args.ref,
+                "source_fingerprint": source_fingerprint,
+                "target_fingerprint": semantic,
+                "obligation_hash": obligation_hash,
+                "post_repair_apply_limit": 1,
+                "recorded_at_utc": utc_now(),
+            }
         revision_charged, opens_new_chapter = classify_semantic_stamp(
             state=state,
             stamp_source=stamp_source,
@@ -3578,10 +5166,11 @@ def cmd_reseal(args: argparse.Namespace) -> int:
             source_fingerprint=source_fingerprint,
             target_fingerprint=semantic,
             stamp_source=stamp_source,
-            ref=args.ref if self_confirm else None,
+            ref=args.ref if contract_candidate else None,
             reason=args.reason or "confirmed semantic reseal",
             charged=revision_charged,
             opens_new_chapter=opens_new_chapter,
+            repair_record=repair_record,
         )
     else:
         updated["stamp_state"] = stamp_state_of(config, source_fingerprint)
@@ -3607,24 +5196,59 @@ def cmd_reseal(args: argparse.Namespace) -> int:
         return reseal_failure(change_id, post_issues)
 
     updated["resealed_at"] = utc_now()
-    if self_confirm:
+    if contract_candidate:
         original_tasks = tasks_path.read_bytes()
         original_features = feature_path.read_bytes() if feature_path.exists() else None
         original_loop = path.read_bytes()
-        feature_payload = build_feature_payload_from_tasks_text(
-            repo_root, change_id, candidate_tasks
-        )
-        feature_bytes = (
-            json.dumps(feature_payload, ensure_ascii=False, indent=2) + "\n"
-        ).encode("utf-8")
+        original_design = design_path.read_bytes() if design_path.is_file() else None
         try:
+            feature_payload = build_feature_payload_from_tasks_text(
+                repo_root, change_id, candidate_tasks
+            )
+            feature_bytes = (
+                json.dumps(feature_payload, ensure_ascii=False, indent=2) + "\n"
+            ).encode("utf-8")
+            if repair_r1:
+                write_bytes_atomic(design_path, candidate_design.encode("utf-8"))
             write_bytes_atomic(tasks_path, candidate_tasks.encode("utf-8"))
             write_bytes_atomic(feature_path, feature_bytes)
             write_json_atomic(path, updated)
             state, detail = strict_validation_state(repo_root, change_id)
             if state == "failed":
                 raise ValueError(f"strict validation failed: {detail}")
+            if repair_r1:
+                planned = build_plan_payload(
+                    repo_root,
+                    change_id,
+                    advisory=False,
+                    batch=True,
+                )
+                if not planned.get("fingerprint_ready") or planned.get("issues"):
+                    raise ValueError(
+                        "post-repair plan failed: "
+                        + "; ".join(
+                            str(item) for item in planned.get("issues", [])
+                        )
+                    )
+                repaired = next(
+                    (
+                        item
+                        for item in planned.get("tasks", [])
+                        if item.get("ref") == args.ref
+                    ),
+                    None,
+                )
+                if repaired is None or repaired.get("effective_state") in {
+                    "blocked",
+                    "deviated",
+                    "maxed",
+                }:
+                    raise ValueError(
+                        f"post-repair ref is not pending/ready: {args.ref}"
+                    )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
+            if repair_r1 and original_design is not None:
+                write_bytes_atomic(design_path, original_design)
             write_bytes_atomic(tasks_path, original_tasks)
             if original_features is None:
                 if feature_path.exists():
@@ -3672,18 +5296,79 @@ def regenerate_feature_index(repo_root: Path, change_id: str) -> None:
     generator.generate(repo_root, change_id)
 
 
-def recorded_verify_pass(ledger: dict[str, Any], fingerprint: str, ref: str) -> bool:
+def verifier_pass_run(
+    ledger: dict[str, Any], fingerprint: str, ref: str
+) -> dict[str, Any] | None:
     for episode in ledger.get("episodes", []):
         if episode.get("contract_fingerprint") != fingerprint:
             continue
-        for attempt in attempts_for_episode(episode):
-            if (
-                attempt.get("ref") == ref
-                and attempt.get("kind") == "verify"
-                and attempt.get("result") in {"pass", "success"}
-            ):
-                return True
-    return False
+        ensure_episode_runs(episode)
+        for run in reversed(episode.get("runs", [])):
+            for attempt in reversed(run.get("attempts", [])):
+                if (
+                    attempt.get("ref") == ref
+                    and attempt.get("kind") in {"verify", "verify_mechanical"}
+                    and attempt.get("result") in {"pass", "success"}
+                    and (
+                        attempt.get("kind") == "verify"
+                        or attempt.get("semantic_verify_required") is False
+                    )
+                ):
+                    return run
+    return None
+
+
+def recorded_verify_pass(ledger: dict[str, Any], fingerprint: str, ref: str) -> bool:
+    return verifier_pass_run(ledger, fingerprint, ref) is not None
+
+
+def load_promotion_target(
+    repo_root: Path,
+    change_id: str,
+    ref: str,
+) -> tuple[TaskEntry, dict[str, Any], set[str]]:
+    """Load only structural state needed for one completion-right transition."""
+
+    tasks_path, feature_path = contract_paths(repo_root, change_id)
+    tasks_text = read_utf8(tasks_path)
+    tasks = parse_task_file(tasks_text)
+    features = load_feature_map(read_utf8(feature_path))
+    build_dependency_graph(tasks, features)
+    matches = [task for task in tasks if task.ref == ref]
+    if len(matches) != 1:
+        raise ValueError(
+            f"unknown ref `{ref}`" if not matches else f"duplicate active ref `{ref}`"
+        )
+    selected = matches[0]
+    by_ref = {task.ref: task for task in tasks}
+    related = [selected] + [
+        by_ref[dependency]
+        for dependency in selected.dependencies
+        if dependency in by_ref
+    ]
+    related_issues = [
+        f"{task.ref}: {issue}" for task in related for issue in task.issues
+    ]
+    if related_issues:
+        raise ValueError("; ".join(related_issues))
+    if selected.effective_state != "ready":
+        raise ValueError(
+            f"{ref} is `{selected.effective_state}`, not `ready`"
+        )
+    unmet = [
+        dependency
+        for dependency in selected.dependencies
+        if dependency not in by_ref or not by_ref[dependency].completed
+    ]
+    if unmet:
+        raise ValueError(f"{ref} has unmet dependencies: " + ",".join(unmet))
+    canonical_features = build_feature_payload_from_tasks_text(
+        repo_root, change_id, tasks_text
+    )["features"]
+    feature = canonical_features.get(ref)
+    if not isinstance(feature, dict):
+        raise ValueError(f"missing feature_list entry for {ref}")
+    return selected, dict(feature), set(canonical_features)
 
 
 def promote_failure(change_id: str, issues: list[str], **extra: Any) -> int:
@@ -3692,6 +5377,7 @@ def promote_failure(change_id: str, issues: list[str], **extra: Any) -> int:
             "schema_version": SCHEMA_PROMOTE,
             "change_id": change_id,
             "promoted": False,
+            "next_required": False,
             "issues": issues,
             **extra,
         }
@@ -3701,44 +5387,39 @@ def promote_failure(change_id: str, issues: list[str], **extra: Any) -> int:
 
 def cmd_promote(args: argparse.Namespace) -> int:
     repo_root, _, fingerprint, ledger_path, _, warnings = resolve_runtime_policy(args)
-    before = build_plan_payload(repo_root, args.change_id, advisory=False)
-    if not before["sealed"] or before["issues"]:
+    try:
+        selected, feature_before, feature_refs_before = load_promotion_target(
+            repo_root, args.change_id, args.ref
+        )
+    except (ValueError, OSError, json.JSONDecodeError) as exc:
         return promote_failure(
             args.change_id,
-            before["issues"] or ["contract is not sealed"],
+            [str(exc)],
             warnings=warnings,
         )
-
-    selected = next(
-        (task for task in before["tasks"] if task["ref"] == args.ref), None
-    )
-    if selected is None:
-        return promote_failure(args.change_id, [f"unknown ref `{args.ref}`"])
-    if selected["effective_state"] != "ready":
-        return promote_failure(
-            args.change_id,
-            [f"{args.ref} is `{selected['effective_state']}`, not `ready`"],
-        )
-    if not recorded_verify_pass(
-        load_or_init_ledger(ledger_path, args.change_id), fingerprint, args.ref
-    ):
+    ledger = load_or_init_ledger(ledger_path, args.change_id)
+    verify_run = verifier_pass_run(ledger, fingerprint, args.ref)
+    if verify_run is None:
         return promote_failure(
             args.change_id,
             [f"no recorded verifier pass for {args.ref} in the current episode"],
+            warnings=warnings,
         )
 
     tasks_path, feature_path = contract_paths(repo_root, args.change_id)
     original_tasks = tasks_path.read_bytes()
     original_features = feature_path.read_bytes() if feature_path.exists() else None
+    original_ledger = ledger_path.read_bytes() if ledger_path.exists() else None
     # Decode without universal-newline translation so an untouched line stays
     # byte-identical, whatever the checkout's line endings are.
     lines = original_tasks.decode("utf-8").splitlines(keepends=True)
-    index = selected["line_number"] - 1
+    index = selected.line_number - 1
     promoted_line = CHECKBOX_MARK_RE.sub(r"\1x\2", lines[index], count=1)
     if promoted_line == lines[index]:
         return promote_failure(
             args.change_id,
-            [f"line {selected['line_number']} is not a promotable checkbox"],
+            [f"line {selected.line_number} is not a promotable checkbox"],
+            warnings=warnings,
         )
     lines[index] = promoted_line
     tasks_path.write_bytes("".join(lines).encode("utf-8"))
@@ -3747,15 +5428,34 @@ def cmd_promote(args: argparse.Namespace) -> int:
         if compute_semantic_fingerprint(repo_root, args.change_id) != fingerprint:
             raise ValueError("promotion would change the sealed obligations")
         regenerate_feature_index(repo_root, args.change_id)
-        after = build_plan_payload(repo_root, args.change_id, advisory=False)
-        if after["issues"]:
-            raise ValueError("; ".join(after["issues"]))
+        features_after = load_feature_map(read_utf8(feature_path))
+        if set(features_after) != feature_refs_before:
+            raise ValueError("promotion changed the active feature ref set")
+        promoted_feature = features_after.get(args.ref)
+        if not isinstance(promoted_feature, dict):
+            raise ValueError(f"promotion removed feature {args.ref}")
+        if normalize_bool(promoted_feature.get("passes")) is not True:
+            raise ValueError(f"promotion did not mark {args.ref} passed")
+        if promoted_feature.get("state") != "passed":
+            raise ValueError(f"promotion did not set {args.ref} state=passed")
+        for field_name in ("accept_hash", "test_hash"):
+            if promoted_feature.get(field_name) != feature_before.get(field_name):
+                raise ValueError(f"promotion changed {field_name} for {args.ref}")
+        append_control_event(verify_run, "promote", ref=args.ref)
+        ledger["updated_at_utc"] = utc_now()
+        write_json_atomic(ledger_path, ledger)
     except (ValueError, OSError, json.JSONDecodeError) as exc:
         tasks_path.write_bytes(original_tasks)
         if original_features is None:
-            feature_path.unlink()
+            if feature_path.exists():
+                feature_path.unlink()
         else:
             feature_path.write_bytes(original_features)
+        if original_ledger is None:
+            if ledger_path.exists():
+                ledger_path.unlink()
+        else:
+            ledger_path.write_bytes(original_ledger)
         return promote_failure(args.change_id, [str(exc)])
 
     emit_json(
@@ -3765,11 +5465,9 @@ def cmd_promote(args: argparse.Namespace) -> int:
             "promoted": True,
             "ref": args.ref,
             "contract_fingerprint": fingerprint,
+            "next_required": True,
             "issues": [],
             "warnings": warnings,
-            "ready_refs": after["ready_refs"],
-            "selected_ref": after["selected_ref"],
-            "terminal_refs": after["terminal_refs"],
         }
     )
     return 0
@@ -3854,21 +5552,35 @@ def approved_evidence_root(config: dict[str, Any]) -> str | None:
     return None
 
 
-def record_task_context(
-    repo_root: Path,
-    change_id: str,
-    ref: str,
+def record_task_context_from_receipt(
+    receipt: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    if "," in ref or "，" in ref or ";" in ref:
-        raise ValueError("one Apply packet may bind exactly one ref")
-    payload = build_plan_payload(repo_root, change_id, advisory=False, batch=True)
-    task = next((item for item in payload.get("tasks", []) if item["ref"] == ref), None)
-    if task is None:
-        raise ValueError(f"unknown active ref `{ref}`")
-    route = next(
-        (item for item in payload.get("routing", []) if item["ref"] == ref),
-        task.get("routing") or {},
-    )
+    ref = str(receipt["ref"])
+    wave_refs = [str(item) for item in receipt.get("wave_refs", [])] or [ref]
+    task = {
+        "ref": ref,
+        "write_scope": list(receipt.get("write_scope", [])),
+        "target_files": list(receipt.get("target_files", [])),
+        "test_level": receipt.get("test_level"),
+    }
+    route = {
+        "ref": ref,
+        "package_id": receipt.get("package_id"),
+        "agent": receipt.get("agent"),
+        "effective_role_id": receipt.get("role_id"),
+        "join_id": receipt.get("join_id"),
+        "worktree_mode": receipt.get("worktree_mode"),
+        "write_policy": receipt.get("write_policy"),
+        "allowed_write_roots": list(receipt.get("allowed_write_roots", [])),
+    }
+    payload = {
+        "selected_wave": wave_refs,
+        "routing": [
+            {"ref": candidate, "join_id": receipt.get("join_id")}
+            for candidate in wave_refs
+        ],
+        "tasks": [{"ref": candidate} for candidate in wave_refs],
+    }
     return payload, task, route
 
 
@@ -3916,7 +5628,29 @@ def validate_record_writes(
     raise ValueError(f"role_write_allowlist:{role_id}:read_only")
 
 
+def normalize_unblock_repair_class(
+    disposition: str,
+    repair_class: str | None,
+) -> str:
+    candidate = repair_class or (
+        "R0" if disposition in {"retry", "targeted_probe"} else "R2"
+    )
+    if candidate not in REPAIR_CLASSES:
+        raise ValueError(f"unsupported repair_class `{candidate}`")
+    if disposition in {"retry", "targeted_probe"} and candidate != "R0":
+        raise ValueError(f"{disposition} requires repair_class R0")
+    if disposition == "amend_spec" and candidate not in {"R1", "R2"}:
+        raise ValueError("amend_spec requires repair_class R1 or R2")
+    if disposition == "supersede_task" and candidate != "R2":
+        raise ValueError("supersede_task always requires repair_class R2")
+    if disposition == "stop_budget" and candidate != "R2":
+        raise ValueError("stop_budget requires repair_class R2")
+    return candidate
+
+
 def cmd_record(args: argparse.Namespace) -> int:
+    if args.kind == "apply" and not args.receipt:
+        raise ValueError("apply_record_requires_receipt")
     repo_root, config, fingerprint, ledger_path, budgets, warnings = resolve_runtime_policy(args)
     ledger = load_or_init_ledger(ledger_path, args.change_id)
     episode, run = load_run(ledger, args.change_id, fingerprint, args.run_id)
@@ -3930,32 +5664,62 @@ def cmd_record(args: argparse.Namespace) -> int:
         raise ValueError("one Apply packet may bind exactly one ref")
     if args.kind == "apply" and args.result == "pass":
         raise ValueError("an Apply worker may not claim PASS")
-    strict_apply = args.kind == "apply" and any(
-        (
-            args.attempt_id,
-            args.packet_id,
-            args.role_id,
-            args.changed_file,
-            args.evidence,
-            args.join_id,
-            args.wave_ref,
-            args.transient_retries,
+    receipt: dict[str, Any] | None = None
+    receipt_id: str | None = None
+    receipt_claim: dict[str, Any] | None = None
+    if args.receipt:
+        receipt_id = args.receipt.strip()
+        receipt_issues: list[str] = []
+        if not re.fullmatch(r"[0-9a-f]{20}", receipt_id):
+            receipt_issues.append("invalid receipt id")
+        receipt_claim = next(
+            (
+                claim
+                for claim in run.get("receipt_claims", [])
+                if claim.get("receipt_id") == receipt_id
+            ),
+            None,
         )
-    )
+        if receipt_claim is None:
+            receipt_issues.append("receipt was not issued by active next")
+        else:
+            snapshot = receipt_claim.get("snapshot")
+            if not isinstance(snapshot, dict):
+                receipt_issues.append("receipt claim has no packet snapshot")
+            else:
+                receipt = snapshot
+                receipt_issues.extend(
+                    receipt_validation_issues(
+                        repo_root, args.change_id, receipt, ref=args.ref
+                    )
+                )
+                if receipt.get("run_id") != args.run_id:
+                    receipt_issues.append("receipt run_id mismatch")
+                if receipt.get("action") != args.kind:
+                    receipt_issues.append("receipt action mismatch")
+            if receipt_claim.get("status") != "issued":
+                receipt_issues.append("receipt claim is not available")
+        if receipt_issues:
+            raise ValueError("; ".join(dict.fromkeys(receipt_issues)))
+    strict_apply = args.kind == "apply"
     payload: dict[str, Any] = {}
     task: dict[str, Any] = {}
     route: dict[str, Any] = {}
+    repair_class: str | None = None
     if strict_apply:
-        payload, task, route = record_task_context(
-            repo_root,
-            args.change_id,
-            args.ref,
-        )
+        if receipt is None:
+            raise ValueError("apply_record_requires_receipt")
+        payload, task, route = record_task_context_from_receipt(receipt)
     if args.kind == "unblock":
+        if repair_r1_target_record(config, fingerprint, args.ref) is not None:
+            raise ValueError(f"repair_r1_unblock_closed:{args.ref}")
         if not has_blocking_evidence(revision_attempts, args.ref):
             raise ValueError(f"task_unblock_dormant:{args.ref}")
         if args.disposition is None:
             raise ValueError("unblock records require --disposition")
+        repair_class = normalize_unblock_repair_class(
+            args.disposition, args.repair_class
+        )
         prior_unblocks = [
             attempt
             for attempt in revision_attempts
@@ -4015,24 +5779,26 @@ def cmd_record(args: argparse.Namespace) -> int:
         raise ValueError("Apply workers and direct Apply may not edit tasks.md")
     evidence = [item.strip() for item in args.evidence if item and item.strip()]
     if args.kind == "apply":
-        prior_apply_count = sum(
-            1
+        repair_record = repair_r1_target_record(config, fingerprint, args.ref)
+        if repair_record is not None and any(
+            item.get("ref") == args.ref and item.get("kind") == "apply"
             for item in revision_attempts
-            if item.get("ref") == args.ref and item.get("kind") == "apply"
-        )
-        attempt_id = args.attempt_id or (
-            f"legacy:{args.run_id}:{args.ref}:{prior_apply_count + 1}"
-        )
+        ):
+            raise ValueError(f"repair_r1_post_apply_exhausted:{args.ref}")
+        receipt_attempt_id = receipt.get("attempt_id")
+        if args.attempt_id and receipt_attempt_id and args.attempt_id != receipt_attempt_id:
+            raise ValueError("Apply attempt_id does not match the plan receipt")
+        if not receipt_attempt_id:
+            raise ValueError("Apply receipt has no attempt_id")
+        attempt_id = str(receipt_attempt_id)
         if any(
             item.get("kind") == "apply" and item.get("attempt_id") == attempt_id
             for item in revision_attempts
         ):
             raise ValueError(f"duplicate canonical Apply attempt_id `{attempt_id}`")
-        expected_packet_id = (
-            f"{route.get('package_id')}:{attempt_id}"
-            if strict_apply and route.get("package_id")
-            else f"{args.change_id}:{args.ref}:{attempt_id}"
-        )
+        expected_packet_id = str(receipt.get("packet_id") or "")
+        if not expected_packet_id:
+            raise ValueError("Apply receipt has no packet_id")
         if args.packet_id and args.packet_id != expected_packet_id:
             raise ValueError("Apply packet_id does not match the routed packet snapshot")
         packet_id = expected_packet_id
@@ -4057,17 +5823,8 @@ def cmd_record(args: argparse.Namespace) -> int:
         if strict_apply and args.join_id and args.join_id != expected_join_id:
             raise ValueError("Apply join_id does not match the routed packet snapshot")
         join_id = expected_join_id if strict_apply else args.join_id
-        worktree_mode = route.get("worktree_mode") or "legacy"
-        expected_wave_refs = (
-            [args.ref]
-            if worktree_mode == "independent"
-            else [
-                item["ref"]
-                for item in payload.get("routing", [])
-                if item.get("join_id") == join_id
-                and item["ref"] in payload.get("selected_wave", [])
-            ]
-        )
+        worktree_mode = route.get("worktree_mode") or "shared"
+        expected_wave_refs = list(receipt.get("wave_refs", [])) or [args.ref]
         if args.wave_ref:
             for wave_ref in args.wave_ref:
                 candidate = wave_ref.strip()
@@ -4115,6 +5872,7 @@ def cmd_record(args: argparse.Namespace) -> int:
         "error_fingerprint": error_fingerprint(args.error_text),
         "result_fingerprint": error_fingerprint(args.observation_text or args.error_text),
         "disposition": args.disposition,
+        "repair_class": repair_class,
         "allocated_subagent_ids": allocated_subagent_ids,
         "runtime_trace_ids": runtime_trace_ids,
         "duration_seconds": max(args.duration_seconds, 0),
@@ -4138,14 +5896,30 @@ def cmd_record(args: argparse.Namespace) -> int:
         "transient_retries": args.transient_retries if args.kind == "apply" else 0,
         "auto_redispatch": False if args.kind == "apply" else None,
         "next_apply_owner": "supervisor_gate" if args.kind == "apply" else None,
+        "receipt_id": receipt_id,
+        "routing_outcome": args.routing_outcome,
     }
     run.setdefault("attempts", []).append(attempt)
+    append_control_event(
+        run,
+        "record",
+        ref=args.ref,
+        record_kind=args.kind,
+    )
+    if receipt_claim is not None:
+        receipt_claim["status"] = "consumed"
+        receipt_claim["consumed_at_utc"] = utc_now()
     run_allocated = run.setdefault("allocated_subagent_ids", [])
     for subagent_id in allocated_subagent_ids:
         if subagent_id not in run_allocated:
             run_allocated.append(subagent_id)
     ledger["updated_at_utc"] = utc_now()
     write_json_atomic(ledger_path, ledger)
+    join = (
+        typed_join_state(attempts_for_episode(episode), args.ref, join_id)
+        if args.kind == "apply" and join_id
+        else None
+    )
     emit_json(
         {
             "schema_version": SCHEMA_LEDGER,
@@ -4155,7 +5929,9 @@ def cmd_record(args: argparse.Namespace) -> int:
             "apply_record_owner": apply_record_owner,
             "attempt_id": attempt_id,
             "packet_id": packet_id,
+            "receipt_id": receipt_id,
             "terminal_status": terminal_status,
+            "join": join,
             "warnings": warnings,
         }
     )
@@ -4231,6 +6007,55 @@ def status_of_apply_record(attempt: dict[str, Any]) -> str | None:
         return canonical_apply_status(result)
     except ValueError:
         return None
+
+
+def typed_join_state(
+    episode_attempts: list[dict[str, Any]],
+    ref: str,
+    join_id: str | None,
+) -> dict[str, Any]:
+    own = next(
+        (
+            attempt
+            for attempt in reversed(episode_attempts)
+            if attempt.get("kind") == "apply"
+            and attempt.get("ref") == ref
+            and attempt.get("join_id") == join_id
+        ),
+        None,
+    )
+    wave_refs = [
+        str(item)
+        for item in (own or {}).get("wave_refs", [])
+        if isinstance(item, str) and item
+    ] or [ref]
+    pending = [
+        candidate
+        for candidate in wave_refs
+        if not any(
+            attempt.get("kind") == "apply"
+            and attempt.get("ref") == candidate
+            and attempt.get("join_id") == join_id
+            and status_of_apply_record(attempt) is not None
+            for attempt in reversed(episode_attempts)
+        )
+    ]
+    state = "pending" if pending else "closed"
+    evidence = (own or {}).get("evidence")
+    verify_eligible = bool(
+        state == "closed"
+        and own is not None
+        and status_of_apply_record(own) == "completed"
+        and isinstance(evidence, list)
+        and any(str(item).strip() for item in evidence)
+    )
+    return {
+        "join_id": join_id,
+        "state": state,
+        "wave_refs": wave_refs,
+        "pending_refs": pending,
+        "verify_eligible": verify_eligible,
+    }
 
 
 def historical_join_reasons(
@@ -4324,6 +6149,187 @@ def verify_wave_reasons(
     if result not in COMPLETED_APPLY_RESULTS:
         return [f"verify_requires_completed_apply:{ref}:{result}"]
     return []
+
+
+def mechanical_test_contract(
+    repo_root: Path,
+    change_id: str,
+    ref: str,
+) -> tuple[str | None, str | None, list[str], list[str]]:
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    import generate_openspec_feature_list as generator
+
+    tasks_path, _ = contract_paths(repo_root, change_id)
+    parsed = next(
+        (item for item in generator.parse_tasks(read_utf8(tasks_path)) if item.ref == ref),
+        None,
+    )
+    if parsed is None:
+        return None, None, [], [f"unknown active ref `{ref}`"]
+    scope: str | None = None
+    commands: list[str] = []
+    for line in parsed.test_lines:
+        scope_match = re.search(r"SCOPE\s*:\s*([A-Za-z]+)", line, re.IGNORECASE)
+        if scope_match:
+            scope = scope_match.group(1).upper()
+        match = re.match(r"^Run\s*:\s*(?P<body>.+)$", line.strip(), re.IGNORECASE)
+        if not match:
+            continue
+        body = match.group("body").strip()
+        if body.startswith("`") and body.endswith("`") and len(body) >= 2:
+            body = body[1:-1].strip()
+        if body:
+            commands.append(body)
+    issues: list[str] = []
+    if not commands and scope in {None, "CLI"}:
+        issues.append("mechanical TEST requires at least one inline Run command")
+    forbidden = re.compile(
+        r"(?:--commit\b|\bgit\s+push\b|\bgh\s+pr\b|\bRemove-Item\b.*-Recurse|\brm\s+-rf\b)",
+        re.IGNORECASE,
+    )
+    if any(forbidden.search(command) for command in commands):
+        issues.append("mechanical TEST contains a separately human-authorized mutation")
+    return parsed.test_level_raw, scope, commands, issues
+
+
+def command_result_record(command: str, completed: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+    stdout = completed.stdout or ""
+    stderr = completed.stderr or ""
+    return {
+        "command_sha256": hashlib.sha256(command.encode("utf-8")).hexdigest(),
+        "exit_code": completed.returncode,
+        "stdout_sha256": hashlib.sha256(stdout.encode("utf-8")).hexdigest(),
+        "stderr_sha256": hashlib.sha256(stderr.encode("utf-8")).hexdigest(),
+    }
+
+
+def cmd_verify_mechanical(args: argparse.Namespace) -> int:
+    repo_root, config, fingerprint, ledger_path, _, warnings = resolve_runtime_policy(args)
+    ledger = load_or_init_ledger(ledger_path, args.change_id)
+    episode, run = load_run(ledger, args.change_id, fingerprint, args.run_id)
+    attempts = attempts_for_episode(episode)
+    latest_apply = latest_attempt_for_ref(attempts, args.ref, kind="apply")
+    if latest_apply is None:
+        issues = [f"verify_requires_apply_result:{args.ref}"]
+    elif latest_apply.get("join_id"):
+        issues = historical_join_reasons(
+            attempts, args.ref, str(latest_apply["join_id"])
+        )
+    else:
+        issues = []
+    test_level, test_scope, commands, contract_issues = mechanical_test_contract(
+        repo_root, args.change_id, args.ref
+    )
+    issues.extend(contract_issues)
+    semantic_required = test_level in SEMANTIC_VERIFY_LEVELS or test_level is None
+    if args.dry_run:
+        emit_json(
+            {
+                "schema_version": SCHEMA_MECHANICAL_VERIFY,
+                "change_id": args.change_id,
+                "ref": args.ref,
+                "run_id": args.run_id,
+                "verdict": "BLOCKED" if issues else "READY",
+                "test_level": test_level,
+                "test_scope": test_scope,
+                "semantic_verify_required": semantic_required,
+                "command_hashes": [
+                    hashlib.sha256(command.encode("utf-8")).hexdigest()
+                    for command in commands
+                ],
+                "issues": issues,
+                "warnings": warnings,
+            }
+        )
+        return 2 if issues else 0
+    if issues:
+        emit_json(
+            {
+                "schema_version": SCHEMA_MECHANICAL_VERIFY,
+                "change_id": args.change_id,
+                "ref": args.ref,
+                "run_id": args.run_id,
+                "verdict": "BLOCKED",
+                "test_level": test_level,
+                "test_scope": test_scope,
+                "semantic_verify_required": semantic_required,
+                "commands": [],
+                "issues": issues,
+                "warnings": warnings,
+            }
+        )
+        return 2
+
+    started = time.monotonic()
+    command_results: list[dict[str, Any]] = []
+    verdict = "PASS" if commands else "SKIPPED"
+    for command in commands:
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=repo_root,
+                shell=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=args.timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            command_results.append(
+                {
+                    "command_sha256": hashlib.sha256(
+                        command.encode("utf-8")
+                    ).hexdigest(),
+                    "exit_code": None,
+                    "timed_out": True,
+                }
+            )
+            verdict = "FAIL"
+            break
+        command_results.append(command_result_record(command, completed))
+        if completed.returncode != 0:
+            verdict = "FAIL"
+            break
+    duration_seconds = max(int(round(time.monotonic() - started)), 0)
+    result = "pass" if verdict in {"PASS", "SKIPPED"} else "fail"
+    attempt = {
+        "recorded_at_utc": utc_now(),
+        "ref": args.ref,
+        "kind": "verify_mechanical",
+        "result": result,
+        "duration_seconds": duration_seconds,
+        "test_level": test_level,
+        "test_scope": test_scope,
+        "semantic_verify_required": semantic_required,
+        "command_results": command_results,
+        "consumes_apply_attempt": False,
+        "consumes_scheduling_headcount": False,
+    }
+    run.setdefault("attempts", []).append(attempt)
+    append_control_event(run, "verify_mechanical", ref=args.ref)
+    ledger["updated_at_utc"] = utc_now()
+    write_json_atomic(ledger_path, ledger)
+    emit_json(
+        {
+            "schema_version": SCHEMA_MECHANICAL_VERIFY,
+            "change_id": args.change_id,
+            "contract_fingerprint": fingerprint,
+            "ref": args.ref,
+            "run_id": args.run_id,
+            "verdict": verdict,
+            "test_level": test_level,
+            "test_scope": test_scope,
+            "semantic_verify_required": semantic_required,
+            "commands": command_results,
+            "issues": [],
+            "warnings": warnings,
+        }
+    )
+    return 0 if verdict in {"PASS", "SKIPPED"} else 2
 
 
 def second_unblock_reasons(
@@ -4499,6 +6505,18 @@ def cmd_gate(args: argparse.Namespace) -> int:
         current_allocated_subagents=args.current_allocated_subagents,
         prospective_subagent_ids=normalize_subagent_ids(args.subagent_id),
     )
+    repair_record = (
+        repair_r1_target_record(config, fingerprint, args.ref)
+        if args.ref
+        else None
+    )
+    if repair_record is not None and args.kind == "unblock":
+        reasons.append(f"repair_r1_unblock_closed:{args.ref}")
+    if repair_record is not None and args.kind == "apply" and any(
+        item.get("ref") == args.ref and item.get("kind") == "apply"
+        for item in attempts_for_episode(episode)
+    ):
+        reasons.append(f"repair_r1_post_apply_exhausted:{args.ref}")
     if args.kind == "verify":
         reasons.extend(
             verify_wave_reasons(
@@ -4542,6 +6560,7 @@ def cmd_summary(args: argparse.Namespace) -> int:
     ledger = load_or_init_ledger(ledger_path, args.change_id)
     episode, run = load_run(ledger, args.change_id, fingerprint, args.run_id)
     attempts = run.get("attempts", [])
+    control_events = run.get("control_events", [])
     revision_attempts = attempts_for_episode(episode)
     change_attempts = attempts_for_change(ledger)
     stamp_state = stamp_state_of(config, fingerprint)
@@ -4552,6 +6571,83 @@ def cmd_summary(args: argparse.Namespace) -> int:
         bucket["total"] += 1
         key = f"{attempt.get('kind')}:{attempt.get('result')}"
         bucket[key] = bucket.get(key, 0) + 1
+    false_success_count = 0
+    completed_apply_by_ref: dict[str, bool] = {}
+    for attempt in attempts:
+        ref = str(attempt.get("ref") or "unknown")
+        bucket = per_ref.setdefault(ref, {"total": 0})
+        kind = attempt.get("kind")
+        result = str(attempt.get("result") or "").lower()
+        if attempt.get("routing_outcome") == "misrouted":
+            bucket["misroute_count"] = bucket.get("misroute_count", 0) + 1
+        if kind in {"verify", "verify_mechanical"} and result == "deviated":
+            bucket["semantic_deviation_count"] = (
+                bucket.get("semantic_deviation_count", 0) + 1
+            )
+        if kind == "apply":
+            completed_apply_by_ref[ref] = status_of_apply_record(attempt) == "completed"
+        elif kind in {"verify", "verify_mechanical"} and result in {
+            "fail",
+            "failed",
+            "failure",
+            "deviated",
+            "blocked",
+        }:
+            if completed_apply_by_ref.get(ref):
+                false_success_count += 1
+                bucket["false_success_count"] = (
+                    bucket.get("false_success_count", 0) + 1
+                )
+            completed_apply_by_ref[ref] = False
+    for event in control_events:
+        if event.get("kind") != "next":
+            continue
+        for ref in event.get("refs", []):
+            bucket = per_ref.setdefault(str(ref), {"total": 0})
+            bucket["next_call_count"] = bucket.get("next_call_count", 0) + 1
+            bucket["census_count"] = bucket.get("census_count", 0) + max(
+                int(event.get("census_calls", 0) or 0), 0
+            )
+    for bucket in per_ref.values():
+        bucket["recorded_hop_count"] = bucket.get("total", 0) + bucket.get(
+            "next_call_count", 0
+        )
+    ablation = {
+        "misroute_count": sum(
+            1 for attempt in attempts if attempt.get("routing_outcome") == "misrouted"
+        ),
+        "false_success_count": false_success_count,
+        "semantic_deviation_count": sum(
+            1
+            for attempt in attempts
+            if attempt.get("kind") in {"verify", "verify_mechanical"}
+            and attempt.get("result") == "deviated"
+        ),
+        "supervisor_card_bytes": supervisor_card_bytes(),
+        "next_call_count": sum(
+            1 for event in control_events if event.get("kind") == "next"
+        ),
+        "census_count": sum(
+            max(int(event.get("census_calls", 0) or 0), 0)
+            for event in control_events
+            if event.get("kind") == "next"
+        ),
+        "prompt_bytes_observed": sum(
+            max(int(event.get("supervisor_card_bytes", 0) or 0), 0)
+            for event in control_events
+            if event.get("kind") == "next"
+        ),
+        "recorded_hop_count": len(attempts) + len(control_events),
+        "control_hop_count": len(control_events),
+        "work_hop_count": len(attempts),
+        "cli_control_call_count": sum(
+            1
+            for event in control_events
+            if event.get("executor", "cli") == "cli"
+        ),
+        "llm_control_call_count": 0,
+        "llm_control_visibility": False,
+    }
     emit_json(
         {
             "schema_version": SCHEMA_SUMMARY,
@@ -4578,6 +6674,7 @@ def cmd_summary(args: argparse.Namespace) -> int:
                 0,
             ),
             "amendment_chain": amendment_chain(ledger),
+            "repair_r1_history": stamp_state.get("repair_r1_history", []),
             "budgets": budgets,
             "autonomy": autonomy_of(config),
             "hard_ceiling": hard_ceiling_of(config),
@@ -4585,6 +6682,189 @@ def cmd_summary(args: argparse.Namespace) -> int:
             "attempts": attempts,
             "latest_attempt": attempts[-1] if attempts else None,
             "per_ref": per_ref,
+            "ablation": ablation,
+        }
+    )
+    return 0
+
+
+def ablation_nonnegative_int(value: Any, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{label} must be a non-negative integer")
+    return value
+
+
+def cmd_ablation_evaluate(args: argparse.Namespace) -> int:
+    manifest_path = args.manifest.resolve()
+    if not manifest_path.is_file():
+        raise ValueError(f"ablation manifest not found: {manifest_path}")
+    payload = json.loads(read_utf8(manifest_path))
+    if not isinstance(payload, dict):
+        raise ValueError("ablation manifest must be a JSON object")
+    if payload.get("schema_version") != SCHEMA_ABLATION_SUITE:
+        raise ValueError("unsupported ablation suite schema")
+    suite_id = str(payload.get("suite_id") or "").strip()
+    if not suite_id:
+        raise ValueError("ablation suite_id is required")
+    cases = payload.get("cases")
+    if not isinstance(cases, list) or not cases:
+        raise ValueError("ablation suite requires a non-empty cases list")
+
+    seen_case_ids: set[str] = set()
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    per_case: list[dict[str, Any]] = []
+    totals = {
+        "control_hop_count": 0,
+        "work_hop_count": 0,
+        "cli_control_call_count": 0,
+        "llm_control_call_count": 0,
+        "prompt_bytes": 0,
+        "census_calls": 0,
+    }
+    true_positive = false_negative = false_positive = true_negative = 0
+
+    for case_index, raw_case in enumerate(cases, start=1):
+        if not isinstance(raw_case, dict):
+            raise ValueError(f"ablation case {case_index} must be an object")
+        case_id = str(raw_case.get("case_id") or "").strip()
+        if not case_id or case_id in seen_case_ids:
+            raise ValueError("ablation case_id values must be non-empty and unique")
+        seen_case_ids.add(case_id)
+        ref = str(raw_case.get("ref") or "").strip()
+        if not ref:
+            raise ValueError(f"ablation case {case_id} requires ref")
+        accept_hash = str(raw_case.get("accept_hash") or "").casefold()
+        input_fingerprint = str(
+            raw_case.get("input_fingerprint") or ""
+        ).casefold()
+        if not re.fullmatch(r"[0-9a-f]{64}", accept_hash):
+            raise ValueError(f"ablation case {case_id} has invalid accept_hash")
+        if not re.fullmatch(r"[0-9a-f]{64}", input_fingerprint):
+            raise ValueError(
+                f"ablation case {case_id} has invalid input_fingerprint"
+            )
+        expected = str(raw_case.get("expected_verdict") or "").upper()
+        observed = str(raw_case.get("observed_verdict") or "").upper()
+        if expected not in ABLATION_VERDICTS:
+            raise ValueError(f"ablation case {case_id} has unknown expected_verdict")
+        if observed not in ABLATION_VERDICTS:
+            raise ValueError(f"ablation case {case_id} has unknown observed_verdict")
+        evidence_refs = raw_case.get("evidence_refs")
+        if (
+            not isinstance(evidence_refs, list)
+            or not evidence_refs
+            or any(not isinstance(item, str) or not item.strip() for item in evidence_refs)
+        ):
+            raise ValueError(f"ablation case {case_id} requires evidence_refs")
+        events = raw_case.get("events")
+        if not isinstance(events, list) or not events:
+            raise ValueError(f"ablation case {case_id} requires ordered events")
+
+        case_counts = {key: 0 for key in totals}
+        for sequence, event in enumerate(events, start=1):
+            if not isinstance(event, dict):
+                raise ValueError(f"ablation case {case_id} event must be an object")
+            if event.get("seq") != sequence:
+                raise ValueError(
+                    f"ablation case {case_id} event seq must be contiguous from 1"
+                )
+            hop_class = event.get("hop_class")
+            executor = event.get("executor")
+            event_kind = event.get("kind")
+            if hop_class not in {"control", "work"}:
+                raise ValueError(f"ablation case {case_id} has unknown hop_class")
+            if executor not in {"cli", "llm"}:
+                raise ValueError(f"ablation case {case_id} has unknown executor")
+            if event_kind not in ABLATION_EVENT_KINDS:
+                raise ValueError(f"ablation case {case_id} has unknown event kind")
+            case_counts[f"{hop_class}_hop_count"] += 1
+            if hop_class == "control":
+                case_counts[f"{executor}_control_call_count"] += 1
+            case_counts["prompt_bytes"] += ablation_nonnegative_int(
+                event.get("prompt_bytes", 0),
+                f"ablation case {case_id} prompt_bytes",
+            )
+            case_counts["census_calls"] += ablation_nonnegative_int(
+                event.get("census_calls", 0),
+                f"ablation case {case_id} census_calls",
+            )
+        for key, value in case_counts.items():
+            totals[key] += value
+
+        expected_deviation = expected == "DEVIATED"
+        observed_deviation = observed == "DEVIATED"
+        if expected_deviation and observed_deviation:
+            true_positive += 1
+        elif expected_deviation:
+            false_negative += 1
+        elif observed_deviation:
+            false_positive += 1
+        else:
+            true_negative += 1
+        case_result = {
+            "case_id": case_id,
+            "ref": ref,
+            "accept_hash": accept_hash,
+            "input_fingerprint": input_fingerprint,
+            "expected_verdict": expected,
+            "observed_verdict": observed,
+            **case_counts,
+        }
+        per_case.append(case_result)
+        groups.setdefault((accept_hash, input_fingerprint), []).append(case_result)
+
+    positive_count = true_positive + false_negative
+    negative_count = false_positive + true_negative
+    eligible_groups = [rows for rows in groups.values() if len(rows) >= 2]
+    consistent_groups = [
+        rows
+        for rows in eligible_groups
+        if len({row["observed_verdict"] for row in rows}) == 1
+    ]
+    conflicts = [
+        {
+            "accept_hash": rows[0]["accept_hash"],
+            "input_fingerprint": rows[0]["input_fingerprint"],
+            "case_ids": [row["case_id"] for row in rows],
+            "observed_verdicts": sorted(
+                {row["observed_verdict"] for row in rows}
+            ),
+        }
+        for rows in eligible_groups
+        if rows not in consistent_groups
+    ]
+    emit_json(
+        {
+            "schema_version": SCHEMA_ABLATION_REPORT,
+            "suite_id": suite_id,
+            "case_count": len(per_case),
+            "control": {
+                **totals,
+                "llm_control_visibility": True,
+            },
+            "deviation_detection": {
+                "true_positive": true_positive,
+                "false_negative": false_negative,
+                "false_positive": false_positive,
+                "true_negative": true_negative,
+                "detection_rate": (
+                    true_positive / positive_count if positive_count else None
+                ),
+                "false_positive_rate": (
+                    false_positive / negative_count if negative_count else None
+                ),
+            },
+            "same_accept_consistency": {
+                "eligible_group_count": len(eligible_groups),
+                "consistent_group_count": len(consistent_groups),
+                "consistency_rate": (
+                    len(consistent_groups) / len(eligible_groups)
+                    if eligible_groups
+                    else None
+                ),
+                "conflicts": conflicts,
+            },
+            "cases": per_case,
         }
     )
     return 0
@@ -4613,6 +6893,28 @@ def build_parser() -> argparse.ArgumentParser:
     check = subparsers.add_parser("check")
     check.add_argument("change_id")
     check.set_defaults(func=cmd_check)
+
+    next_command = subparsers.add_parser("next")
+    next_command.add_argument("change_id")
+    next_command.add_argument("--intent", choices=NEXT_INTENTS, default="drain")
+    next_command.add_argument("--run-id", default="default")
+    next_command.add_argument(
+        "--shadow",
+        action="store_true",
+        help="compute compact control output without granting receipt authority",
+    )
+    next_command.add_argument(
+        "--verbose",
+        action="store_true",
+        help="include full task, routing, ready, and terminal diagnostics",
+    )
+    next_command.set_defaults(func=cmd_next)
+
+    receipt_check = subparsers.add_parser("receipt-check")
+    receipt_check.add_argument("change_id")
+    receipt_check.add_argument("--ref")
+    receipt_check.add_argument("--receipt", required=True)
+    receipt_check.set_defaults(func=cmd_receipt_check)
 
     goals = subparsers.add_parser("goals")
     goals.add_argument("change_id")
@@ -4669,6 +6971,7 @@ def build_parser() -> argparse.ArgumentParser:
     seal.add_argument("--bundle-root")
     seal.add_argument("--gui-colab-root")
     seal.add_argument("--confirmed-at")
+    seal.add_argument("--reason")
     seal.add_argument("--max-apply-attempts", type=int)
     seal.add_argument("--max-unblock-runs", type=int)
     seal.add_argument("--max-explore-runs", type=int)
@@ -4690,6 +6993,7 @@ def build_parser() -> argparse.ArgumentParser:
     reseal.add_argument("--stamp-source", choices=STAMP_SOURCES)
     reseal.add_argument("--ref")
     reseal.add_argument("--candidate-tasks", type=Path)
+    reseal.add_argument("--candidate-design", type=Path)
     reseal.add_argument("--narrative-policy", choices=NARRATIVE_POLICIES)
     reseal.add_argument("--reason")
     reseal.add_argument("--set-max-revisions", type=int)
@@ -4722,9 +7026,19 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--ref", required=True)
     record.add_argument(
         "--kind",
-        choices=("apply", "verify", "explore", "unblock", "goal", "stop_hook", "review"),
+        choices=(
+            "apply",
+            "verify",
+            "verify_mechanical",
+            "explore",
+            "unblock",
+            "goal",
+            "stop_hook",
+            "review",
+        ),
         required=True,
     )
+    record.add_argument("--repair-class", choices=REPAIR_CLASSES)
     record.add_argument(
         "--result",
         choices=(
@@ -4758,6 +7072,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="supervisor",
     )
     record.add_argument("--attempt-id")
+    record.add_argument("--receipt")
     record.add_argument("--packet-id")
     record.add_argument("--role-id")
     record.add_argument("--changed-file", action="append", default=[])
@@ -4766,8 +7081,19 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--wave-ref", action="append", default=[])
     record.add_argument("--transient-retries", type=int, default=0)
     record.add_argument("--duration-seconds", type=int, default=0)
+    record.add_argument("--routing-outcome", choices=("ok", "misrouted", "unknown"))
     record.add_argument("--ledger-path", type=Path)
     record.set_defaults(func=cmd_record)
+
+    mechanical = subparsers.add_parser("verify-mechanical")
+    mechanical.add_argument("change_id")
+    mechanical.add_argument("--contract-fingerprint")
+    mechanical.add_argument("--run-id", default="default")
+    mechanical.add_argument("--ref", required=True)
+    mechanical.add_argument("--timeout-seconds", type=int, default=1800)
+    mechanical.add_argument("--dry-run", action="store_true")
+    mechanical.add_argument("--ledger-path", type=Path)
+    mechanical.set_defaults(func=cmd_verify_mechanical)
 
     gate = subparsers.add_parser("gate")
     gate.add_argument("change_id")
@@ -4789,6 +7115,10 @@ def build_parser() -> argparse.ArgumentParser:
     summary.add_argument("--run-id", default="default")
     summary.add_argument("--ledger-path", type=Path)
     summary.set_defaults(func=cmd_summary)
+
+    ablation = subparsers.add_parser("ablation-evaluate")
+    ablation.add_argument("--manifest", type=Path, required=True)
+    ablation.set_defaults(func=cmd_ablation_evaluate)
 
     return parser
 
