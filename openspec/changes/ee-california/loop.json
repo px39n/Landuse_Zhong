@@ -24,6 +24,7 @@
       "max_active_minutes": 120
     },
     "change": {
+      "max_revisions": 3,
       "max_active_minutes": 360
     }
   },
