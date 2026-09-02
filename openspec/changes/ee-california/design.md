@@ -130,9 +130,13 @@ The gallery lives in a new append-only `post_freeze/{gallery_id}/` sibling, neve
 
 Each scene binds P2/family/sample/model/variant/media hashes, frozen projections, true NDVI, McFeeters NDWI `(Green-NIR)/(Green+NIR)`, separately named NDMI when present, annual QA/source identities, NAIP acquisition metadata, and official survey raw/decoded evidence. Training, tuning, metric, area, PV-mask, label-change, and scientific-acceptance flags are false. Without actual field observations it is a scene-evidence gallery, not field validation.
 
-### 11. Loop authority remains finite and multi-root
+### 11. Loop v3 authority is fingerprint-latched, zpy-direct, and ref-local
 
-R5--R12 are the only active refs. Loop retention remains `thin`; ledger and scratch remain `test_cache/ee-california/...`; product, bundle, and GUI roots are `null`. Exact repo, D-drive, P2, gallery, and RF outputs are declared in specs/tasks. Sealing creates none of them. Existing task/revision/change iteration and time budgets remain unchanged; external dollar authority cannot be enlarged by unused Loop iterations.
+R5--R12 are the only active refs. Loop retention remains `thin`; ledger and scratch remain `test_cache/ee-california/...`; product, bundle, and GUI roots are `null`. Exact repo, D-drive, P2, gallery, and RF outputs are declared in specs/tasks. A matching active-registry fingerprint with no pending irreversible policy is sufficient for ordinary local Apply. Supervisor-direct work uses local role `zpy`, `agent=null`, synchronous execution, and an immediate supervisor join; it creates no dispatch envelope. Explicit `rose` remains predecessor/bootstrap provenance only.
+
+Each active ref retains `max_apply_attempts=3` and dormant `max_unblock_runs=1`. These allowances are ref-local and are not replenished by narrative refresh, semantic restamp, a new run id, or Unblock. Deleted revision/change/hard-ceiling iteration counts are migration residue and SHALL NOT reappear as Apply authority; active-minute, breaker, and revision-count diagnostics remain finite. `sealed`, `confirmed_at`, headcount, and optional hard-ceiling fields are compatibility diagnostics, not ordinary start-work gates.
+
+Loop autonomy never authorizes GEE exports, GCS writes, paid submissions, credentials, product `--commit`, Git push, PR operations, or writes to `master`. Those effects continue to require the separate Landuse gates and explicit user authority. Fingerprint or narrative refresh creates none of the declared products or external operations.
 
 ## Risks / Trade-offs
 
@@ -157,4 +161,4 @@ Rollback is fail-closed: retain immutable evidence, stop new work, and return to
 
 ## Open Questions
 
-None. The API, feature family, cutoff and extension semantics, exact CONUS bbox/exclusion/point-within AOI, California subset authority, product roots, P2 authority, RF identity, conditional USD 100 authorization, retention, tests, finite budgets, and forbidden writes were confirmed on 2026-08-30.
+None. The API, feature family, cutoff and extension semantics, exact CONUS bbox/exclusion/point-within AOI, California subset authority, product roots, P2 authority, RF identity, conditional USD 100 authorization, thin retention, zpy-direct Loop v3 routing, ref-local budgets, tests, and forbidden writes were confirmed through 2026-08-31.
