@@ -21,6 +21,13 @@ fields are audit diagnostics, not a start-work gate and not broader authority.
 
 ## `interview.md` (seven sections)
 
+For Loop R2 or task succession, create or refresh this file before asking the
+user a question. Prefill current fingerprint, active ACCEPT, expected/observed,
+retention, paths, budgets, and autonomy. Preserve accepted answers and Section
+7 history; refresh only stale context. Missing policy defaults to thin +
+A_local_thin, Apply 2, Unblock 2, cycle stamps 3, and supervised. Existing
+change-local or B_external_heavy paths are inherited and not re-asked.
+
 ```markdown
 ## 1. 资料来源与证据
 | Source | Inspected | Observed facts | Confidence |

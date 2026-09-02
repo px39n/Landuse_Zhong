@@ -41,9 +41,11 @@ and prompt-validation role ID; it is outside the upstream 21-role namespace.
   readable only for predecessor/history and the bounded bootstrap task.
 - A `zpy` or `rose` label never authenticates a caller, creates authority, or
   permits native host dispatch; both remain supervisor-direct with `agent=null`.
-- If the selected local entry is unavailable, lacks the needed capability, or
-  would overlap another current package, the proactive scan must return a named
-  `direct` reason or `blocked`; it must not substitute `general`.
+- Ordinary Apply routing comes only from compiled `next`; do not repeat a
+  proactive scan. For a genuine `review|explore` residual question, the
+  specialist scan may return a named `direct` reason or `blocked` when the local
+  entry is unavailable, incapable, or overlaps another package; it must not
+  substitute `general`.
 - Only `implementer` may edit task-owned implementation or contract files.
 - Only `test-engineer` may edit task-owned test files.
 - Only `browser-qa-runner` and `e2e-artifact-runner` may write, and only to the

@@ -1,0 +1,63 @@
+{
+  "schema_version": "openspec-loop-ablation-suite.v1",
+  "suite_id": "loop-v32-control-plane",
+  "cases": [
+    {
+      "case_id": "stable-pass-a",
+      "ref": "R1",
+      "accept_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "input_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expected_verdict": "PASS",
+      "observed_verdict": "PASS",
+      "evidence_refs": ["fixture:stable-pass-a"],
+      "events": [
+        {"seq": 1, "hop_class": "control", "executor": "cli", "kind": "next", "prompt_bytes": 100, "census_calls": 1},
+        {"seq": 2, "hop_class": "work", "executor": "llm", "kind": "apply", "prompt_bytes": 200},
+        {"seq": 3, "hop_class": "work", "executor": "llm", "kind": "verify_semantic", "prompt_bytes": 100}
+      ]
+    },
+    {
+      "case_id": "stable-pass-b",
+      "ref": "R1",
+      "accept_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "input_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expected_verdict": "PASS",
+      "observed_verdict": "PASS",
+      "evidence_refs": ["fixture:stable-pass-b"],
+      "events": [
+        {"seq": 1, "hop_class": "control", "executor": "cli", "kind": "next", "prompt_bytes": 90, "census_calls": 1},
+        {"seq": 2, "hop_class": "work", "executor": "llm", "kind": "apply", "prompt_bytes": 190},
+        {"seq": 3, "hop_class": "work", "executor": "llm", "kind": "verify_semantic", "prompt_bytes": 90}
+      ]
+    },
+    {
+      "case_id": "deviation-detected",
+      "ref": "R2",
+      "accept_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "input_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "expected_verdict": "DEVIATED",
+      "observed_verdict": "DEVIATED",
+      "evidence_refs": ["fixture:deviation-detected"],
+      "events": [
+        {"seq": 1, "hop_class": "control", "executor": "cli", "kind": "next", "census_calls": 1},
+        {"seq": 2, "hop_class": "work", "executor": "llm", "kind": "apply"},
+        {"seq": 3, "hop_class": "work", "executor": "llm", "kind": "verify_semantic"}
+      ]
+    },
+    {
+      "case_id": "deviation-missed",
+      "ref": "R2",
+      "accept_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "input_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "expected_verdict": "DEVIATED",
+      "observed_verdict": "PASS",
+      "evidence_refs": ["fixture:deviation-missed"],
+      "events": [
+        {"seq": 1, "hop_class": "control", "executor": "cli", "kind": "next", "census_calls": 1},
+        {"seq": 2, "hop_class": "control", "executor": "llm", "kind": "interview", "prompt_bytes": 120},
+        {"seq": 3, "hop_class": "work", "executor": "llm", "kind": "apply"},
+        {"seq": 4, "hop_class": "work", "executor": "llm", "kind": "verify_semantic"}
+      ]
+    }
+  ]
+}

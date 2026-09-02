@@ -80,6 +80,7 @@ definition of a blocker. JSON is canonical; Markdown guidance is derived.
     "action": "targeted_probe",
     "rationale": "One bounded experiment can choose between the leading hypotheses."
   },
+  "repair_class": "R0",
   "sinks": {"requested": [], "applied": [], "errors": []}
 }
 ```
@@ -95,6 +96,10 @@ Validate machine output against
 - The probe states what competing hypotheses it distinguishes.
 - The disposition is exactly one of `retry`, `targeted_probe`, `amend_spec`,
   `supersede_task`, or `stop_budget`.
+- `repair_class` is optional for compatibility. Missing `retry|targeted_probe`
+  means `R0`; missing `amend_spec` means `R2`; `supersede_task|stop_budget`
+  are always `R2`. `R1` is only an advisory same-obligation method repair and
+  never grants write authority by itself.
 - Sink paths are caller-controlled; `return_only` is valid.
 
 ## Compatibility

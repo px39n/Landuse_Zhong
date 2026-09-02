@@ -1,8 +1,10 @@
 # Proactive Delegation Scan
 
-Run this scan at the start of every non-trivial intent, and again only when
-changed evidence exposes a materially new work split. This is a local Loop
-routing step. It does not create a second lifecycle, consume Apply budget, or claim scheduling headcount.
+Ordinary Apply routing is compiled in `next`; do not make the model repeat it.
+Use this specialist scan only when `next_action=review|explore` or changed
+evidence leaves one unresolved semantic question that deterministic
+implementer/test routing cannot answer. It does not create a second lifecycle,
+consume Apply budget, or claim scheduling headcount.
 
 ## Inputs
 
@@ -31,26 +33,28 @@ effective_role_id: <canonical role id or local zpy> | N/A
 
 ## Decision rules
 
-1. Classify the assignment before choosing a role.
-2. Select the narrowest canonical Role ID with the most specific evidence
+1. Confirm that CLI routing cannot answer the specialist question; otherwise
+   stop and use the emitted route.
+2. Classify the assignment before choosing a role.
+3. Select the narrowest canonical Role ID with the most specific evidence
    contract.
-3. Return `dispatch` only when all of these hold:
+4. Return `dispatch` only when all of these hold:
    - the assignment is one clear bounded non-trivial package;
    - the narrowest matching specialist is available;
    - current effective capabilities and permissions permit the package; and
    - ownership does not overlap another current package.
-4. Return `direct` only for one named exception:
+5. Return `direct` only for one named exception:
    - `trivial_work`
    - `clarification_or_split`
    - `no_matching_specialist`
    - `capability_failure`
    - `overlap`
    - `negative_benefit`
-5. A permitted new `direct` package uses local `effective_role_id: zpy` and
+6. A permitted new `direct` package uses local `effective_role_id: zpy` and
    remains supervisor-owned with `agent=null`. Explicit `rose` is accepted only
    as predecessor/history or bounded bootstrap input and is never a new inferred
    output.
-6. Missing authority or missing effective capability remains `blocked`; it must
+7. Missing authority or missing effective capability remains `blocked`; it must
    not be converted into a direct exception.
 
 ## Dispatch consequences
