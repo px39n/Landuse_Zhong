@@ -1,62 +1,42 @@
 ---
 name: openspec-verify-change
-description: Verify one OpenSpec task or a whole change against active acceptance and observed evidence, returning a typed semantic verdict without implementing fixes.
+description: Independently judge one OpenSpec task against ACCEPT after mechanical
+  evidence. Never implement, promote, or share the author context.
 license: MIT
 metadata:
   author: openspec
-  version: "2.0"
+  version: "3.0"
 ---
 
-# OpenSpec Verify Change
+# openspec-verify-change
 
-Verify active contract truth against implementation and product evidence.
-Verification is evidence-first and read-only.
+Independent semantic verification only. Use a fresh context; do not inherit the
+author's chat or treat unverified claims as evidence. Inspect the actual changed
+source and retained outputs independently.
 
-## Modes and admission
+## When
 
-- `$openspec-verify-change <change-id> --task <ref>`: semantic promotion verdict
-  for one selected task.
-- `$openspec-verify-change <change-id>`: whole-change and GOAL closing.
+`next_action=verify_semantic` after mechanical evidence exists for the ref.
 
-Task mode requires `next_action=verify_semantic`, a current joined Apply, and
-CLI `verify-mechanical` PASS. Do not rerun its command or census. `smoke` closes
-mechanically; `pilot|production|canary` and legacy tasks use this skill.
+## Method
 
-Read only the selected ACCEPT, TEST, dependencies, applicable requirements,
-implementation, and focused evidence. An unchecked task before promotion is
-not a defect. Use recorded retention/paths; never create a full bundle unless
-`retention=full` or audit was explicitly requested.
+1. Start with ACCEPT/TEST and mechanical evidence pointers; inspect the referenced
+   source, diffs and outputs needed to judge every acceptance claim.
+2. Compare source, target, metric, schema, and research direction.
+3. Exit 0 alone is insufficient; wrong direction → `DEVIATED`.
+4. Never edit product code, write the ledger, or promote.
 
-For detailed task judgment and GOAL/design closing, read
-`references/semantic-verification-contract.md`. For an adopted execution
-notebook, also read
-`.agents/skills/openspec-apply-change/references/execution-notebook-contract.md`.
-Verify remains read-only and never expands WRITE_SCOPE or human authority.
+## Typed result file
 
-## Verdict
-
-- `PASS`: observed checks and semantics match ACCEPT.
-- `FAIL`: implementation or tests violate a stable contract.
-- `BLOCKED`: required authority, environment, dependency, or evidence is absent.
-- `DEVIATED`: execution may succeed, but source, target, metric, product, or
-  research direction differs from ACCEPT.
-
-Return exactly one `PASS|FAIL|BLOCKED|DEVIATED` verdict. Never edit ACCEPT,
-tasks, feature state, notebook, manifest, or product; only the supervisor may
-promote.
-
-```text
-VERDICT: PASS|FAIL|BLOCKED|DEVIATED
-REF: R<n>|whole-change
-RISK: contract-only|normal|high
-ASSURANCE: full|reduced
-EXPECTED: <accepted outcome>
-OBSERVED: <verified outcome>
-EVIDENCE:
-- <file, artifact, or command pointer>
-NEXT:
-- <one bounded action>
+```json
+{
+  "verdict": "PASS",
+  "reasons": ["matches ACCEPT"],
+  "evidence_refs": ["path"],
+  "duration_seconds": 1.0
+}
 ```
 
-For `BLOCKED` or `DEVIATED`, return the structured comparison to
-`$openspec-unblock-research`; do not implement the repair.
+Verdicts: `PASS|FAIL|BLOCKED|DEVIATED`. Submit through
+`record --kind verify --receipt <id> --result <file>` when a receipt is bound,
+or return the file to the supervisor for recording.

@@ -1,6 +1,6 @@
 ---
 name: "OPSX: Verify"
-description: Verify an OpenSpec task or whole change
+description: Verify an OpenSpec change or task
 ---
 
 Read and follow `.agents/skills/openspec-verify-change/SKILL.md` for

@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenSpec Explore"
+  short_description: "Read-only OpenSpec investigation."
+  default_prompt: "Host is Codex. Use $openspec-explore for read-only investigation. Do not implement or write the ledger."

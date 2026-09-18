@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenSpec Verify Change"
+  short_description: "Independent semantic verification."
+  default_prompt: "Host is Codex. Use $openspec-verify-change in an independent context. Judge ACCEPT only; never implement or promote."

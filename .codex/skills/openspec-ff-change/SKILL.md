@@ -1,6 +1,6 @@
 ---
 name: openspec-ff-change
-description: Fast-forward OpenSpec artifact creation to an implementation-ready draft, then require interviewer confirmation before Loop execution.
+description: Draft the required OpenSpec artifacts in one pass from a concrete objective. Does not execute Loop.
 license: MIT
 metadata:
   author: openspec
@@ -21,12 +21,11 @@ one bounded authoring pass when the user's intent is already concrete.
    `python scripts/generate_openspec_feature_list.py --change-id <change-id>`.
 6. Run `openspec validate <change-id> --strict`.
 
-Fast-forward reduces authoring round trips; it does not bypass human boundary
-confirmation. Do not invent retention, external paths, concurrency, or budget
-choices. Draft ACCEPT/TEST against
+Reuse confirmed boundaries and ask only for unresolved material choices.
+Do not invent retention, external paths, concurrency, or budget choices. Draft ACCEPT/TEST against
 `.agents/skills/openspec-change-interviewer/references/acceptance-quality.md`.
-Finish by handing off to `$openspec-change-interviewer <change-id>` with the
-matching entry mode (`new-idea`, `succession`, or `additive-extension`), which
-grills remaining material fields and seals `loop.json`.
+Use `$openspec-change-interviewer <change-id>` for missing or changed material
+fields. Report artifact readiness; when execution is requested, hand off to
+`openspec-loop-engineering` for controller-owned admission.
 
 Do not execute implementation or create audit bundles from this skill.

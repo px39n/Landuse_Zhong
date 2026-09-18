@@ -1,6 +1,6 @@
 ---
 name: "OPSX: Interview"
-description: Confirm boundaries and seal an OpenSpec Loop revision
+description: Interview and seal an OpenSpec change
 ---
 
 Read and follow `.agents/skills/openspec-change-interviewer/SKILL.md` for

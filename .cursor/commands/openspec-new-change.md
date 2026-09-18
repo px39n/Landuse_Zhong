@@ -1,7 +1,7 @@
 ---
-description: Start a new OpenSpec change.
-argument-hint: <change-id or objective>
+description: Create a new OpenSpec change.
+argument-hint: <change-id>
 ---
 
-Read and follow `.agents/skills/openspec-new-change/SKILL.md` for `$ARGUMENTS`.
-This command is a thin router.
+Read and follow `.agents/skills/openspec-new-change/SKILL.md` for
+`$ARGUMENTS`. This command is a thin router.

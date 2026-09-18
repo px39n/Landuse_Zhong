@@ -1,6 +1,6 @@
 ---
 name: "OPSX: Continue"
-description: Create the next artifact for an OpenSpec change
+description: Continue an existing OpenSpec change
 ---
 
 Read and follow `.agents/skills/openspec-continue-change/SKILL.md` for

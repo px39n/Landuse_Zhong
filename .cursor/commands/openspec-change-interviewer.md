@@ -1,5 +1,5 @@
 ---
-description: Confirm the OpenSpec execution boundary and seal Loop policy.
+description: Interview and seal an OpenSpec change.
 argument-hint: <change-id>
 ---
 

@@ -1,97 +1,23 @@
-# Local Dispatch Packet
+# Admitted host work
 
-This packet defines the local logical dispatch envelope carried through the
-single change-local `handoff.json.dispatches[]` surface.
+The current `next` facade returns `receipts[]` with `receipt_id`, `ref`,
+`action` and a packet for Apply. Use the controller's supplied identifiers,
+ACCEPT, TEST, WRITE_SCOPE, goals and design anchors; do not manufacture
+authority, hashes or a frozen source snapshot.
 
-```text
-Agent: agents/<agent-id>
-Receipt ID:
-Receipt token:
-Harness contract hash:
-Package ID:
-Role ID:
-Local entry:
-Ref:
-Apply attempt:
-Assignment:
-Acceptance boundary:
-Scope:
-Forbidden scope:
-Allowed actions:
-Write scope:
-Test level: smoke | pilot | production | canary | unspecified
-Expected result:
-Expected evidence:
-Execution: sync | async
-Join: immediate | <join-id> | N/A
-Stop when:
-```
+The native host driver uses actual exposed spawn and lifecycle tools.
+Python cannot create native execution evidence by claiming a tool label.
+Use available native default with an inherited model unless explicitly requested.
+Unsupported capability stays unsupported. Never launch a separate supervisor.
 
-## Rules
+Each worker receives only its admitted scope, relevant source and action schema.
+Workers do not dispatch nested agents, mutate tasks/ledger or enlarge authority.
+Use an independent verifier context. Shared-worktree verification waits for all
+actually dispatched writers to join. Main supervises; the controller owns
+admission, budget, verdict registration and closure.
 
-- `Agent` is a logical protocol address, not a repository path, slash command,
-  persistent lifecycle, or copied provider projection.
-- `Package ID` names one bounded work package.
-- `Receipt ID` and token come from active `next`; validate them with
-  `receipt-check` and never replace that check with a worker-side census. A
-  shadow receipt has no Apply authority.
-- `Role ID` is one canonical worker role from `canonical-roles.json` or local
-  supervisor-direct `zpy`. Explicit `rose` is legacy/bootstrap input only.
-  `general` is not a valid formal owner.
-- `Local entry` is the adapter projection from `role-adapter-matrix.md`.
-- `Ref` and `Apply attempt` bind one Apply packet to exactly one active ref and
-  one supervisor-owned Apply attempt. Non-Apply review or research packets may
-  use `Apply attempt: N/A`.
-- `Scope`, `Forbidden scope`, `Allowed actions`, and `Write scope` narrow
-  runtime authority; they never create new authority.
-- `Harness contract hash` binds machine schemas and authority rules, not prose
-  skill formatting. `Test level` selects mechanical/semantic Verify scale.
-- `Execution` is `async` only for independent inputs, non-overlapping writes,
-  and a stable supervisor-owned `Join` id.
-- Every non-supervisor worker remains non-delegating.
-
-## Fresh-packet boundary
-
-Any change to Role ID, local entry, assignment, ref, scope, forbidden scope,
-permissions, write scope, acceptance boundary, expected result, or verification
-claim requires a new packet.
-
-Every native host packet uses a fresh one-shot task/thread context. A terminal
-result closes that context; `Task.resume`, `resume_agent`, old task/thread IDs,
-and equivalent continuation are forbidden.
-
-## Native host batch projection
-
-The Loop census may expose direct and dispatchable refs together. A native host
-must derive:
-
-```text
-host_batch_refs =
-  dispatch_refs where routing.decision == dispatch and agent != null
-```
-
-Direct `zpy|rose` refs remain supervisor-local even when present in
-`dispatch_refs`. One wave produces at most one native host batch and at most one
-fresh packet per `host_batch_ref`.
-
-For a static transmission-efficiency test, shared fingerprint, join ID, and
-write-disjoint declaration may be measured once as `shared_context_bytes`,
-while ref-local projections contribute `packet_delta_bytes`. This normalized
-test projection does not replace or redefine the canonical packet schema.
-
-## Retry and redispatch
-
-- A worker may retry only transient tool or process failures inside the same
-  unchanged packet before its terminal result.
-- A terminal `failed`, empty, `partial`, `blocked`, or `unverified` result does
-  not authorize automatic redispatch, resume, role swap, or scope expansion.
-- The supervisor decides whether a new Apply attempt is permitted by gate and
-  budget.
-
-## Local exclusions
-
-- Do not copy or depend on delivery-flow lifecycle state.
-- Do not materialize foreign attached-repository ownership, external worktree
-  identity, formal board ownership, per-worker status journals, or a second
-  ledger.
-- Do not use runtime-private ids as the packet identity.
+Reconcile receipts with actual host state before waiting or recovering.
+Cancellation and a timeout do not by themselves prove native termination.
+Confirm that an earlier writer has stopped before controller cancellation and
+reissue; report uncertain ownership instead of launching another writer.
+Return the action's typed result file and relinquish write authority.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Pipeline"
+  short_description: "One read-only specialist risk answer."
+  default_prompt: "Host is Codex. Use $review-pipeline for one bounded read-only risk answer. Do not implement or award PASS."

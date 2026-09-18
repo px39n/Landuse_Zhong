@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenSpec Change Interviewer"
+  short_description: "Author OpenSpec contracts."
+  default_prompt: "Host is Codex. Use $openspec-change-interviewer to author/revise contracts. Ask missing retention locks immediately. Never award runtime PASS."

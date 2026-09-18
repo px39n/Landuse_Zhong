@@ -1,7 +1,7 @@
 ---
-description: Explore an OpenSpec question without implementing.
-argument-hint: [change-id or question]
+description: Explore an OpenSpec change without writing.
+argument-hint: <change-id>
 ---
 
-Read and follow `.agents/skills/openspec-explore/SKILL.md` for `$ARGUMENTS`.
-This command is a thin router.
+Read and follow `.agents/skills/openspec-explore/SKILL.md` for
+`$ARGUMENTS`. This command is a thin router.
