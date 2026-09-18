@@ -1,5 +1,5 @@
 ---
-description: Diagnose a hard blocker or semantic deviation with bounded evidence.
+description: Diagnose a blocked OpenSpec Loop task.
 argument-hint: <change-id>
 ---
 

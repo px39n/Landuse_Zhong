@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenSpec Apply Change"
+  short_description: "Implement one receipt-bound task."
+  default_prompt: "Host is Codex. Use $openspec-apply-change for one receipt-bound ref. Return a typed result file only; never write the ledger or award PASS."

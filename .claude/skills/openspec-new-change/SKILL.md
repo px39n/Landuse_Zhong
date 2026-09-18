@@ -1,6 +1,6 @@
 ---
 name: openspec-new-change
-description: Start a new OpenSpec change and capture the initial problem boundary. Route execution-ready changes through the interviewer before Loop sealing.
+description: Start a new OpenSpec change and capture its objective, boundaries and first artifact. Does not execute Loop.
 license: MIT
 metadata:
   author: openspec
@@ -22,10 +22,10 @@ exploration.
    data sources, or budgets.
 5. Report the created artifact and next unresolved decision.
 
-This skill does not seal or execute Loop. When the package becomes
-implementation-ready, invoke `$openspec-change-interviewer <change-id>` in
-entry mode `new-idea` (or `succession` when upgrading a historical/main
-capability) to grill material boundaries and seal `loop.json`.
+This skill authors artifacts only. Use `$openspec-change-interviewer <change-id>`
+for missing or changed material decisions; reuse existing confirmations.
+When execution is requested, hand off to `openspec-loop-engineering`; only its
+controller establishes admission and runtime readiness.
 
 Keep only current contract text in OpenSpec. Git history, not an accumulating
 appendix, preserves replaced drafts.

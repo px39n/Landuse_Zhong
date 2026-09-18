@@ -1,6 +1,6 @@
 ---
 name: openspec-continue-change
-description: Continue an existing OpenSpec artifact workflow by creating the next required artifact, without executing implementation or claiming Loop readiness before the registry fingerprint matches.
+description: Create the next required artifact for an existing OpenSpec change. Does not execute implementation or grant runtime readiness.
 license: MIT
 metadata:
   author: openspec
@@ -20,20 +20,15 @@ Continue artifact authoring for one existing change.
 6. Report what became ready and the next artifact or decision.
 
 Do not implement product code, run the Loop, or create retained audit evidence.
-After the active tasks are complete, regenerate `feature_list.json`, run strict
-validation, then use `check`/`plan` to establish a matching
-`contract_fingerprint`. Missing `loop.json` may initialize recorded thin
-defaults without creating any ledger, scratch, cache, product, or retained
-root.
+After authoring the active task definitions, regenerate `feature_list.json`
+and run strict validation. Reuse confirmed retention and scope. Route unresolved
+material decisions to `openspec-change-interviewer`. Before changing an active
+contract, coordinate affected claims through the controller.
 
-Narrative-only drift is refreshed with `reseal <change-id>`. If this update
-changes the active task registry semantically, pause affected dispatch:
-`supervised` returns to `$openspec-change-interviewer <change-id>` for the
-material decision; `full_auto` lets the sole supervisor restamp with
-`--allow-semantic-change --reason`. A new revision or optional stamp never
-silently resets change-level or ref-local budgets.
+When execution is requested, hand off to `openspec-loop-engineering`; its
+controller owns admission, fingerprint checks, budgets and runtime state.
+Source revisions never reset consumed usage or grant execution authority.
 
 Artifact completion alone does not authorize an irreversible retention, path,
 scope, credential, destructive-write, product `--commit`, or Git policy change.
-Ordinary execution needs a matching fingerprint and no such policy pending; it
-does not need a seal-first ceremony.
+Report artifact readiness separately from controller-granted execution readiness.

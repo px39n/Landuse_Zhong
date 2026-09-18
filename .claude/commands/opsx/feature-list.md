@@ -1,6 +1,6 @@
 ---
 name: "OPSX: Feature List"
-description: Generate the compact OpenSpec Loop feature registry
+description: Generate or refresh the OpenSpec feature list
 ---
 
 Read and follow `.agents/skills/openspec-feature-list/SKILL.md` for

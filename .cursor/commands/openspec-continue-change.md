@@ -1,5 +1,5 @@
 ---
-description: Create the next artifact for an existing OpenSpec change.
+description: Continue an existing OpenSpec change.
 argument-hint: <change-id>
 ---
 

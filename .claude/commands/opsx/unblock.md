@@ -1,6 +1,6 @@
 ---
 name: "OPSX: Unblock"
-description: Diagnose a blocker or semantic deviation
+description: Diagnose a blocked OpenSpec Loop task
 ---
 
 Read and follow `.agents/skills/openspec-unblock-research/SKILL.md` for

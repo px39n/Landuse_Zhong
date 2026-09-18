@@ -1,7 +1,7 @@
 ---
-description: Fast-forward an OpenSpec change to an execution-ready draft.
-argument-hint: <change-id or objective>
+description: Fast-forward create an OpenSpec change.
+argument-hint: <change-id>
 ---
 
-Read and follow `.agents/skills/openspec-ff-change/SKILL.md` for `$ARGUMENTS`.
-This command is a thin router.
+Read and follow `.agents/skills/openspec-ff-change/SKILL.md` for
+`$ARGUMENTS`. This command is a thin router.

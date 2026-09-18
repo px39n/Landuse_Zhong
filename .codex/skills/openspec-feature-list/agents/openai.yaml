@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenSpec Feature List"
+  short_description: "Rebuild feature_list.json."
+  default_prompt: "Host is Codex. Use $openspec-feature-list to rebuild the derived feature registry only."

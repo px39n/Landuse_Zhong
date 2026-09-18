@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenSpec Unblock Research"
+  short_description: "Diagnose one blocked/DEVIATED ref."
+  default_prompt: "Host is Codex. Use $openspec-unblock-research in-process (spawn 0). Return a disposition; do not implement the repair."

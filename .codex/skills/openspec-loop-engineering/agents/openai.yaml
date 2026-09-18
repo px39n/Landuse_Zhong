@@ -1,4 +1,4 @@
 interface:
   display_name: "OpenSpec Loop Engineering"
-  short_description: "Run a bounded OpenSpec implement-verify loop."
-  default_prompt: "Use $openspec-loop-engineering to run this change through a bounded implement-verify-unblock loop."
+  short_description: "Drive compact next/record Loop facade."
+  default_prompt: "Host is Codex. Use $openspec-loop-engineering to follow the controller's next_action with actual native tools; keep Apply and semantic Verify separate, and run Unblock in-process (spawn 0) as required by the shared skill."

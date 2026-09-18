@@ -1,5 +1,5 @@
 ---
-description: Generate the compact OpenSpec Loop feature registry.
+description: Generate or refresh the OpenSpec feature list.
 argument-hint: <change-id>
 ---
 
